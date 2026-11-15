@@ -92,6 +92,21 @@ class Pro {
   final bool nightAvailable;
 }
 
+/// Personne soignée : le titulaire du compte ou un proche qu'il gère.
+class Patient {
+  Patient({
+    required this.id,
+    required this.name,
+    this.relation = 'Moi',
+    this.allergies = '',
+  });
+
+  final String id;
+  final String name;
+  final String relation;
+  final String allergies;
+}
+
 class CareLog {
   const CareLog({
     required this.arrivedAt,
@@ -118,6 +133,8 @@ class Booking {
   Booking({
     required this.id,
     required this.patientName,
+    this.patientAllergies = '',
+    this.mine = false,
     required this.service,
     required this.pro,
     required this.commune,
@@ -134,6 +151,10 @@ class Booking {
 
   final String id;
   final String patientName;
+  final String patientAllergies;
+
+  /// Vrai si la réservation a été faite depuis le compte patient connecté.
+  final bool mine;
   final CareService service;
   final Pro pro;
   final String commune;

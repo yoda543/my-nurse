@@ -155,8 +155,16 @@ class BookingCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              _line(Icons.person_outline,
-                  forPro ? b.patientName : '${b.pro.name} · ${b.pro.type.label}'),
+              if (forPro)
+                _line(Icons.person_outline, b.patientName)
+              else ...[
+                _line(Icons.person_outline, 'Pour ${b.patientName}'),
+                _line(Icons.medical_services_outlined,
+                    '${b.pro.name} · ${b.pro.type.label}'),
+              ],
+              if (forPro && b.patientAllergies.isNotEmpty)
+                _line(Icons.warning_amber_rounded,
+                    'Allergies : ${b.patientAllergies}'),
               _line(Icons.event_outlined, dateTimeLabel(b.scheduledAt)),
               _line(Icons.place_outlined, '${b.commune} · ${b.address}'),
               _line(

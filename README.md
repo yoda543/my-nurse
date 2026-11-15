@@ -15,6 +15,8 @@ Parcours en place :
 - **Patient** : connexion par téléphone, choix du soin et de la commune, liste des soignants
   vérifiés, fiche soignant, réservation (ordonnance, majoration de nuit), suivi des soins,
   compte rendu, note.
+- **Proches** : un compte peut réserver pour un parent (nom, lien, allergies) ; le soignant
+  voit les allergies sur la demande.
 - **Soignant** : demandes à accepter ou refuser, planning, compte rendu de soin, revenus
   nets de commission, profil.
 

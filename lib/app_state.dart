@@ -16,6 +16,9 @@ class AppState extends ChangeNotifier {
 
   UserRole? role;
   String patientName = 'Awa Bamba';
+
+  /// Le titulaire du compte et les proches qu'il gère.
+  late final List<Patient> patients = [Patient(id: 'P0', name: patientName)];
   String commune = communes.first;
   int _nextId = 1;
 
@@ -39,6 +42,22 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Patient addPatient({
+    required String name,
+    required String relation,
+    String allergies = '',
+  }) {
+    final p = Patient(
+      id: 'P${patients.length}',
+      name: name,
+      relation: relation,
+      allergies: allergies,
+    );
+    patients.add(p);
+    notifyListeners();
+    return p;
+  }
+
   /// Pros vérifiés proposant ce service dans la commune, meilleurs d'abord.
   List<Pro> prosFor(CareService s, String commune) {
     final list = pros
@@ -59,11 +78,15 @@ class AppState extends ChangeNotifier {
     required DateTime scheduledAt,
     required bool hasPrescription,
     String note = '',
-    String? patient,
+    Patient? patient,
+    String? otherPatientName,
   }) {
+    final who = patient ?? patients.first;
     final b = Booking(
       id: 'R${_nextId++}',
-      patientName: patient ?? patientName,
+      patientName: otherPatientName ?? who.name,
+      patientAllergies: otherPatientName == null ? who.allergies : '',
+      mine: otherPatientName == null,
       service: service,
       pro: pro,
       commune: commune,
@@ -112,7 +135,7 @@ class AppState extends ChangeNotifier {
   }
 
   List<Booking> get patientBookings =>
-      bookings.where((b) => b.patientName == patientName).toList();
+      bookings.where((b) => b.mine).toList();
 
   List<Booking> proBookings(BookingStatus status) => bookings
       .where((b) => b.pro.id == currentPro.id && b.status == status)
@@ -134,7 +157,7 @@ class AppState extends ChangeNotifier {
       scheduledAt: at(1, 9),
       hasPrescription: false,
       note: 'Pansement après opération du genou.',
-      patient: 'Jean Kouassi',
+      otherPatientName: 'Jean Kouassi',
     );
     final confirmed = book(
       service: s('injection'),
@@ -143,7 +166,7 @@ class AppState extends ChangeNotifier {
       address: 'Cocody Angré, 8e tranche, immeuble Sika, 2e étage',
       scheduledAt: at(0, 17),
       hasPrescription: true,
-      patient: 'Adjoua Brou',
+      otherPatientName: 'Adjoua Brou',
     );
     confirmed.status = BookingStatus.accepted;
 

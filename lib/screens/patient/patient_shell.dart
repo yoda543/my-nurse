@@ -5,6 +5,7 @@ import '../../models.dart';
 import '../../theme.dart';
 import '../../widgets.dart';
 import 'booking_detail.dart';
+import 'patient_form.dart';
 import 'pros_list.dart';
 
 class PatientShell extends StatefulWidget {
@@ -212,6 +213,39 @@ class _ProfileTab extends StatelessWidget {
             ),
             subtitle: Text('Compte patient · ${app.commune}'),
           ),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Personnes soignées',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Réservez pour vous ou pour un proche, même à distance.',
+          style: TextStyle(color: Colors.black54),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Column(
+            children: [
+              for (final p in app.patients)
+                ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(p.name),
+                  subtitle: Text(
+                    p.allergies.isEmpty
+                        ? p.relation
+                        : '${p.relation} · Allergies : ${p.allergies}',
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => showPatientForm(context),
+          icon: const Icon(Icons.add),
+          label: const Text('Ajouter un proche'),
         ),
         const SizedBox(height: 24),
         OutlinedButton.icon(

@@ -69,6 +69,30 @@ void main() {
     expect(b.rating, 5);
   });
 
+  test('proche : le soin est au nom du proche et ses allergies suivent', () {
+    final app = AppState();
+    final mother = app.addPatient(
+      name: 'Maman Bamba',
+      relation: 'Mère',
+      allergies: 'Pénicilline',
+    );
+    final before = app.patientBookings.length;
+    final b = app.book(
+      service: app.services.first,
+      pro: app.pros.first,
+      commune: 'Cocody',
+      address: 'Angré 8e tranche',
+      scheduledAt: DateTime(2030, 1, 10, 10),
+      hasPrescription: true,
+      patient: mother,
+    );
+    expect(b.patientName, 'Maman Bamba');
+    expect(b.patientAllergies, 'Pénicilline');
+    expect(app.patientBookings.length, before + 1);
+    // Les demandes des autres patients ne sont pas dans « Mes soins ».
+    expect(app.patientBookings.every((e) => e.mine), isTrue);
+  });
+
   test('recherche : seuls les pros de la commune qui font ce soin', () {
     final app = AppState();
     final kine = app.services.firstWhere((s) => s.id == 'kine');

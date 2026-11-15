@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../app_state.dart';
 import '../../format.dart';
 import '../../models.dart';
+import 'patient_form.dart';
 
 class BookingFormScreen extends StatefulWidget {
   const BookingFormScreen({super.key, required this.pro, required this.service});
@@ -20,6 +21,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   final _note = TextEditingController();
   late DateTime _when;
   bool _prescription = false;
+  Patient? _patient;
   String? _error;
 
   @override
@@ -87,6 +89,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
       scheduledAt: _when,
       hasPrescription: _prescription,
       note: _note.text.trim(),
+      patient: _patient ?? app.patients.first,
     );
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => _ConfirmationScreen(pro: widget.pro)),
@@ -116,6 +119,34 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
               style: const TextStyle(color: Colors.black54),
             ),
             const SizedBox(height: 20),
+            DropdownButtonFormField<Patient>(
+              key: ValueKey(app.patients.length),
+              initialValue: _patient ?? app.patients.first,
+              decoration: const InputDecoration(
+                labelText: 'Pour qui est le soin ?',
+                prefixIcon: Icon(Icons.person_outline),
+              ),
+              items: [
+                for (final p in app.patients)
+                  DropdownMenuItem(
+                    value: p,
+                    child: Text('${p.name} (${p.relation})'),
+                  ),
+              ],
+              onChanged: (p) => setState(() => _patient = p),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () async {
+                  final p = await showPatientForm(context);
+                  if (p != null) setState(() => _patient = p);
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Ajouter un proche'),
+              ),
+            ),
+            const SizedBox(height: 4),
             Row(
               children: [
                 Expanded(
