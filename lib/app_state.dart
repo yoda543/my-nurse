@@ -1168,17 +1168,58 @@ class AppState extends ChangeNotifier {
     past.paidAt = at(-4, 18);
     past.receiptNumber =
         'MN-${start.year}-${(_nextReceipt++).toString().padLeft(5, '0')}';
-    aya.wallet.move(
-      WalletTxKind.earning,
-      5100,
-      'Injection · Koffi Yao',
-      at: at(-6, 11),
+    // Deux soins déjà terminés par Aya pour d'autres patients. Ce sont de vrais
+    // soins (et non de simples lignes de solde), pour que « Commission … sur
+    // N soins terminés » corresponde à l'historique et suive le taux en vigueur.
+    void doneForAya(
+      String service,
+      Patient patient,
+      String address,
+      DateTime when,
+    ) {
+      final b = _create(
+        service: s(service),
+        pro: aya,
+        commune: 'Cocody',
+        address: address,
+        scheduledAt: when,
+        hasPrescription: true,
+        patient: patient,
+        mine: false,
+        createdAt: when.subtract(const Duration(days: 1)),
+      );
+      b.status = BookingStatus.done;
+      b.acceptedAt = when.subtract(const Duration(hours: 23));
+      b.paymentMethod = PaymentMethod.orange;
+      b.paidAt = when.subtract(const Duration(hours: 22));
+      b.receiptNumber =
+          'MN-${start.year}-${(_nextReceipt++).toString().padLeft(5, '0')}';
+      b.careLog = CareLog(
+        arrivedAt: when,
+        leftAt: when.add(const Duration(minutes: 30)),
+        acts: service == 'perfusion'
+            ? 'Pose de la perfusion et surveillance.'
+            : 'Injection intramusculaire.',
+      );
+      aya.wallet.move(
+        WalletTxKind.earning,
+        b.proEarnings,
+        '${b.service.name} · ${b.patientName}',
+        at: when.add(const Duration(hours: 1)),
+      );
+    }
+
+    doneForAya(
+      'injection',
+      Patient(id: 'X4', name: 'Koffi Yao', birthYear: 1972),
+      'Cocody II Plateaux, rue des Jardins',
+      at(-6, 10),
     );
-    aya.wallet.move(
-      WalletTxKind.earning,
-      12750,
-      'Perfusion · Marie Kouadio',
-      at: at(-5, 15),
+    doneForAya(
+      'perfusion',
+      marie,
+      'Cocody Ambassades, rue du Lycée technique',
+      at(-5, 14),
     );
     aya.wallet.move(
       WalletTxKind.withdrawal,

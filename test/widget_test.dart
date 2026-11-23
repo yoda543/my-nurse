@@ -296,6 +296,21 @@ void main() {
       expect(app.patientBookings.every((e) => e.mine), isTrue);
     });
 
+    test('démo : chaque gain du soignant correspond à un soin terminé', () {
+      final app = _app()..loginPro(AppState.demoProPhone);
+      final aya = app.currentPro!;
+      final done = app.proBookings(BookingStatus.done);
+      final earnings =
+          aya.wallet.history.where((t) => t.kind == WalletTxKind.earning);
+      expect(done, hasLength(earnings.length));
+      expect(
+        earnings.fold<int>(0, (s, t) => s + t.amount),
+        done.fold<int>(0, (s, b) => s + b.proEarnings),
+      );
+      // Commission au taux en vigueur (10 %) sur tous les soins de la démo.
+      expect(done.every((b) => b.commissionRate == 0.10), isTrue);
+    });
+
     test('le carnet regroupe les comptes rendus de la personne', () async {
       final app = _app();
       final me = app.patients.first;
