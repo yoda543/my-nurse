@@ -63,15 +63,65 @@ extension BookingStatusLabel on BookingStatus {
   };
 }
 
-enum PaymentMethod { orange, mtn, moov, wave }
+enum PaymentMethod { wallet, orange, mtn, moov, wave }
 
 extension PaymentMethodLabel on PaymentMethod {
   String get label => switch (this) {
+    PaymentMethod.wallet => 'Solde MyNurse',
     PaymentMethod.orange => 'Orange Money',
     PaymentMethod.mtn => 'MTN MoMo',
     PaymentMethod.moov => 'Moov Money',
     PaymentMethod.wave => 'Wave',
   };
+}
+
+/// Moyens de paiement externes (recharge, paiement direct, retrait).
+final mobileMoneyMethods = PaymentMethod.values
+    .where((m) => m != PaymentMethod.wallet)
+    .toList();
+
+/// Limites du porte-monnaie.
+const minTopUp = 500;
+const maxTopUp = 500000;
+const minWithdrawal = 1000;
+
+enum WalletTxKind { topUp, payment, refund, earning, withdrawal }
+
+/// Un mouvement sur un solde MyNurse (montant positif = crédit).
+class WalletTx {
+  const WalletTx({
+    required this.at,
+    required this.kind,
+    required this.amount,
+    required this.label,
+  });
+
+  final DateTime at;
+  final WalletTxKind kind;
+  final int amount;
+  final String label;
+}
+
+/// Solde et historique d'un compte (patient ou soignant).
+class Wallet {
+  int balance = 0;
+  final List<WalletTx> history = [];
+
+  /// Applique un mouvement ; refuse tout solde négatif.
+  bool move(WalletTxKind kind, int amount, String label, {DateTime? at}) {
+    if (amount == 0 || balance + amount < 0) return false;
+    balance += amount;
+    final tx = WalletTx(
+      at: at ?? DateTime.now(),
+      kind: kind,
+      amount: amount,
+      label: label,
+    );
+    history
+      ..add(tx)
+      ..sort((a, b) => b.at.compareTo(a.at));
+    return true;
+  }
 }
 
 /// Communes de lancement.
@@ -151,6 +201,9 @@ class Pro {
 
   /// Pièces justificatives déposées.
   final Set<DocType> documents;
+
+  /// Gains disponibles, retirables vers Mobile Money.
+  final Wallet wallet = Wallet();
   String rejectionReason;
 
   bool get verified => status == VerificationStatus.verified;

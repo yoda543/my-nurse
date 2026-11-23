@@ -4,6 +4,7 @@ import '../../app_state.dart';
 import '../../models.dart';
 import '../../theme.dart';
 import '../../widgets.dart';
+import '../wallet.dart';
 import 'booking_detail.dart';
 import 'health_record.dart';
 import 'patient_form.dart';
@@ -91,6 +92,8 @@ class _HomeTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
+        const PatientWalletCard(),
+        const SizedBox(height: 12),
         DropdownButtonFormField<String>(
           initialValue: app.commune,
           decoration: const InputDecoration(

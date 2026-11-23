@@ -315,6 +315,8 @@ class _ActivityTab extends StatelessWidget {
       ('Commissions', fcfa(app.commissionTotal)),
       ('Argent bloqué', fcfa(app.escrowTotal)),
       ('Remboursements', fcfa(app.refundTotal)),
+      ('Soldes clients', fcfa(app.clientBalances)),
+      ('Soldes soignants', fcfa(app.proBalances)),
       (
         'Soignants vérifiés',
         '${app.prosWithStatus(VerificationStatus.verified).length}',

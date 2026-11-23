@@ -87,8 +87,7 @@ class BookingDetailScreen extends StatelessWidget {
                     title: const Text('Annuler ce soin ?'),
                     content: Text(
                       '${b.pro.name} sera prévenu(e).'
-                      '${b.paid ? ' Vous serez remboursé de ${fcfa(b.price)} '
-                                'sur votre compte ${b.paymentMethod!.label}.' : ''}',
+                      '${b.paid ? ' Les ${fcfa(b.price)} reviennent tout de suite sur votre solde MyNurse.' : ''}',
                     ),
                     actions: [
                       TextButton(

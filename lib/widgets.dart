@@ -210,16 +210,16 @@ class BookingCard extends StatelessWidget {
 
 /// Où en est l'argent du soin, en une ligne.
 String? paymentLabel(Booking b) {
-  if (b.refunded) return 'Remboursé (${b.paymentMethod!.label})';
+  if (b.refunded) return 'Remboursé sur le solde MyNurse';
   if (b.status == BookingStatus.cancelled && b.cancelReason.isNotEmpty) {
     return b.cancelReason;
   }
   if (b.awaitingPayment) return 'En attente du paiement';
   if (b.readyForCare) {
-    return 'Payé par ${b.paymentMethod!.label}, bloqué jusqu’à la fin du soin';
+    return 'Payé (${b.paymentMethod!.label}), bloqué jusqu’à la fin du soin';
   }
   if (b.status == BookingStatus.done && b.paid) {
-    return 'Payé par ${b.paymentMethod!.label}, reversé au soignant';
+    return 'Payé (${b.paymentMethod!.label}), reversé au soignant';
   }
   return null;
 }

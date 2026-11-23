@@ -4,6 +4,7 @@ import '../../app_state.dart';
 import '../../format.dart';
 import '../../models.dart';
 import '../../widgets.dart';
+import '../wallet.dart';
 import 'care_log_form.dart';
 import 'pro_onboarding.dart';
 
@@ -27,9 +28,9 @@ class _ProShellState extends State<ProShell> {
     return Scaffold(
       body: SafeArea(
         child: switch (_tab) {
-          0 => const _RequestsTab(),
+          0 => _RequestsTab(onOpenWallet: () => setState(() => _tab = 2)),
           1 => const _PlanningTab(),
-          2 => const _EarningsTab(),
+          2 => const ProWalletTab(),
           _ => const _ProProfileTab(),
         },
       ),
@@ -51,7 +52,7 @@ class _ProShellState extends State<ProShell> {
           ),
           const NavigationDestination(
             icon: Icon(Icons.account_balance_wallet_outlined),
-            label: 'Revenus',
+            label: 'Solde',
           ),
           const NavigationDestination(
             icon: Icon(Icons.person_outline),
@@ -64,7 +65,9 @@ class _ProShellState extends State<ProShell> {
 }
 
 class _RequestsTab extends StatelessWidget {
-  const _RequestsTab();
+  const _RequestsTab({required this.onOpenWallet});
+
+  final VoidCallback onOpenWallet;
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +76,23 @@ class _RequestsTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SectionTitle('Nouvelles demandes'),
+        Row(
+          children: [
+            const Expanded(child: SectionTitle('Demandes')),
+            Padding(
+              padding: const EdgeInsets.only(right: 20, top: 8),
+              child: ActionChip(
+                avatar: const Icon(
+                  Icons.account_balance_wallet_outlined,
+                  size: 18,
+                ),
+                label: Text(fcfa(app.currentPro!.wallet.balance)),
+                tooltip: 'Mon solde',
+                onPressed: onOpenWallet,
+              ),
+            ),
+          ],
+        ),
         Expanded(
           child: list.isEmpty
               ? const EmptyState(
@@ -182,79 +201,6 @@ class _PlanningTab extends StatelessWidget {
                   },
                 ),
         ),
-      ],
-    );
-  }
-}
-
-class _EarningsTab extends StatelessWidget {
-  const _EarningsTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final app = AppScope.of(context);
-    final done = app.proBookings(BookingStatus.done);
-    final total = done.fold<int>(0, (s, b) => s + b.proEarnings);
-    final commission = done.fold<int>(0, (s, b) => s + b.commission);
-    final blocked = app
-        .proBookings(BookingStatus.accepted)
-        .where((b) => b.readyForCare)
-        .fold<int>(0, (s, b) => s + b.proEarnings);
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 24),
-      children: [
-        const SectionTitle('Revenus'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Gains versés',
-                    style: TextStyle(color: Colors.black54),
-                  ),
-                  Text(
-                    fcfa(total),
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${done.length} soin${done.length > 1 ? 's' : ''} '
-                    'terminé${done.length > 1 ? 's' : ''} · commission '
-                    'MyNurse ${fcfa(commission)}',
-                    style: const TextStyle(color: Colors.black54),
-                  ),
-                  if (blocked > 0) ...[
-                    const Divider(height: 24),
-                    Text(
-                      '${fcfa(blocked)} déjà payés par vos patients, versés '
-                      'dès que vous terminez les soins.',
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        for (final b in done)
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-            title: Text(b.service.name),
-            subtitle: Text(
-              '${b.patientName} · ${dateTimeLabel(b.scheduledAt)}',
-            ),
-            trailing: Text(
-              '+ ${fcfa(b.proEarnings)}',
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
       ],
     );
   }

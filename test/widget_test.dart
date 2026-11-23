@@ -7,16 +7,20 @@ import 'package:mynurse/models.dart';
 
 final _day = DateTime(2030, 1, 10, 10);
 
-Booking _book(AppState app, {String service = 'pansement', DateTime? at, Patient? patient}) =>
-    app.book(
-      service: app.services.firstWhere((s) => s.id == service),
-      pro: app.pros.first,
-      commune: 'Cocody',
-      address: 'Angré 8e tranche',
-      scheduledAt: at ?? _day,
-      hasPrescription: true,
-      patient: patient,
-    );
+Booking _book(
+  AppState app, {
+  String service = 'pansement',
+  DateTime? at,
+  Patient? patient,
+}) => app.book(
+  service: app.services.firstWhere((s) => s.id == service),
+  pro: app.pros.first,
+  commune: 'Cocody',
+  address: 'Angré 8e tranche',
+  scheduledAt: at ?? _day,
+  hasPrescription: true,
+  patient: patient,
+);
 
 void main() {
   setUpAll(() => initializeDateFormatting('fr_FR'));
@@ -92,10 +96,89 @@ void main() {
 
     test('un soin terminé ne peut plus être annulé', () {
       final app = AppState();
-      final done = app.patientBookings
-          .firstWhere((b) => b.status == BookingStatus.done);
+      final done = app.patientBookings.firstWhere(
+        (b) => b.status == BookingStatus.done,
+      );
       app.cancel(done);
       expect(done.status, BookingStatus.done);
+    });
+  });
+
+  group('porte-monnaie', () {
+    test('recharge : limites et moyens acceptés', () {
+      final app = AppState();
+      final before = app.wallet.balance;
+      app.topUp(10000, PaymentMethod.orange);
+      expect(app.wallet.balance, before + 10000);
+      expect(app.wallet.history.first.kind, WalletTxKind.topUp);
+      expect(() => app.topUp(100, PaymentMethod.wave), throwsArgumentError);
+      expect(() => app.topUp(1000000, PaymentMethod.wave), throwsArgumentError);
+      expect(() => app.topUp(5000, PaymentMethod.wallet), throwsArgumentError);
+    });
+
+    test('payer avec le solde : refusé si insuffisant, débité sinon', () {
+      final app = AppState();
+      final b = _book(app);
+      app.respond(b, accept: true);
+      app.wallet.move(WalletTxKind.payment, -app.wallet.balance, 'vider');
+      expect(app.pay(b, PaymentMethod.wallet), isFalse);
+      expect(b.paid, isFalse);
+
+      app.topUp(10000, PaymentMethod.wave);
+      expect(app.pay(b, PaymentMethod.wallet), isTrue);
+      expect(app.wallet.balance, 10000 - b.price);
+      expect(b.readyForCare, isTrue);
+    });
+
+    test('annulation : remboursement immédiat sur le solde', () {
+      final app = AppState();
+      final b = _book(app);
+      app.respond(b, accept: true);
+      app.pay(b, PaymentMethod.mtn);
+      final before = app.wallet.balance;
+      app.cancel(b);
+      expect(app.wallet.balance, before + b.price);
+      expect(app.wallet.history.first.kind, WalletTxKind.refund);
+    });
+
+    test('le soignant est crédité à la fin du soin, puis retire', () {
+      final app = AppState();
+      final aya = app.pros.first;
+      final b = _book(app);
+      app.respond(b, accept: true);
+      app.pay(b, PaymentMethod.wave);
+      final before = aya.wallet.balance;
+      expect(app.upcomingEarnings(aya), greaterThanOrEqualTo(b.proEarnings));
+
+      app.submitCareLog(
+        b,
+        CareLog(
+          arrivedAt: _day,
+          leftAt: _day.add(const Duration(minutes: 30)),
+          acts: 'Pansement',
+        ),
+      );
+      expect(aya.wallet.balance, before + b.proEarnings);
+
+      expect(
+        () => app.withdraw(aya, 500, PaymentMethod.wave),
+        throwsArgumentError,
+      );
+      expect(
+        () => app.withdraw(aya, aya.wallet.balance + 1, PaymentMethod.wave),
+        throwsArgumentError,
+      );
+      app.withdraw(aya, aya.wallet.balance, PaymentMethod.orange);
+      expect(aya.wallet.balance, 0);
+      expect(aya.wallet.history.first.kind, WalletTxKind.withdrawal);
+    });
+
+    test('démo : soldes de départ cohérents avec l’historique', () {
+      final app = AppState();
+      int sum(Wallet w) => w.history.fold(0, (s, t) => s + t.amount);
+      expect(app.wallet.balance, sum(app.wallet));
+      expect(app.pros.first.wallet.balance, sum(app.pros.first.wallet));
+      expect(app.pros.first.wallet.balance, greaterThan(0));
     });
   });
 
@@ -126,17 +209,17 @@ void main() {
     test('prix hors fourchette ou soin d’une autre profession refusés', () {
       final app = AppState();
       Pro reg(Map<String, int> prices) => app.registerPro(
-            name: 'X',
-            phone: '0102030405',
-            type: ProType.infirmier,
-            communes: ['Cocody'],
-            prices: prices,
-            yearsExperience: 1,
-            bio: 'Bio',
-            orderNumber: 'ONII-2',
-            nightAvailable: false,
-            documents: requiredDocs(ProType.infirmier).toSet(),
-          );
+        name: 'X',
+        phone: '0102030405',
+        type: ProType.infirmier,
+        communes: ['Cocody'],
+        prices: prices,
+        yearsExperience: 1,
+        bio: 'Bio',
+        orderNumber: 'ONII-2',
+        nightAvailable: false,
+        documents: requiredDocs(ProType.infirmier).toSet(),
+      );
       expect(() => reg({'pansement': 100000}), throwsArgumentError);
       expect(() => reg({'consultation': 20000}), throwsArgumentError);
     });
@@ -162,7 +245,9 @@ void main() {
     test('suspension : soins à venir annulés et remboursés', () {
       final app = AppState();
       final aya = app.pros.first;
-      final paid = app.bookings.firstWhere((b) => b.pro == aya && b.readyForCare);
+      final paid = app.bookings.firstWhere(
+        (b) => b.pro == aya && b.readyForCare,
+      );
       app.suspendPro(aya, 'Plainte en cours');
       expect(aya.status, VerificationStatus.suspended);
       expect(paid.status, BookingStatus.cancelled);
@@ -239,8 +324,9 @@ void main() {
     expect(find.text('Créer mon compte soignant'), findsOneWidget);
   });
 
-  testWidgets('inscription : les champs vides du haut bloquent l’envoi',
-      (tester) async {
+  testWidgets('inscription : les champs vides du haut bloquent l’envoi', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);

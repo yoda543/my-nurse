@@ -239,7 +239,8 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                       _row('Total', fcfa(total), bold: true),
                       const SizedBox(height: 8),
                       const Text(
-                        'Paiement Mobile Money après confirmation du soignant.',
+                        'Paiement après confirmation du soignant, avec votre solde '
+                        'MyNurse ou en Mobile Money.',
                         style: TextStyle(color: Colors.black54, fontSize: 13),
                       ),
                     ],

@@ -34,6 +34,9 @@ class AppState extends ChangeNotifier {
     ),
   ];
 
+  /// Porte-monnaie du compte patient connecté.
+  final Wallet wallet = Wallet();
+
   /// Soignant connecté (null tant que le dossier n'est pas créé).
   Pro? currentPro;
 
@@ -267,12 +270,59 @@ class AppState extends ChangeNotifier {
 
   /// Paiement Mobile Money. En production : agrégateur (CinetPay ou PayDunya),
   /// confirmé par son webhook, jamais par l'app.
-  void pay(Booking b, PaymentMethod method) {
-    if (!b.awaitingPayment) return;
+  /// Renvoie false si le solde ne suffit pas.
+  bool pay(Booking b, PaymentMethod method) {
+    if (!b.awaitingPayment) return false;
+    if (method == PaymentMethod.wallet &&
+        !wallet.move(
+          WalletTxKind.payment,
+          -b.price,
+          '${b.service.name} · ${b.pro.name}',
+        )) {
+      return false;
+    }
     b.paymentMethod = method;
     b.paidAt = DateTime.now();
     notifyListeners();
+    return true;
   }
+
+  // ---------------------------------------------------------- porte-monnaie
+  /// Recharge du solde patient. En production : confirmée par le webhook
+  /// de l'agrégateur, jamais par l'app.
+  void topUp(int amount, PaymentMethod method) {
+    if (method == PaymentMethod.wallet) {
+      throw ArgumentError('Rechargez avec un compte Mobile Money.');
+    }
+    if (amount < minTopUp || amount > maxTopUp) {
+      throw ArgumentError('Montant hors limites.');
+    }
+    wallet.move(WalletTxKind.topUp, amount, 'Recharge ${method.label}');
+    notifyListeners();
+  }
+
+  /// Retrait des gains d'un soignant vers Mobile Money.
+  void withdraw(Pro p, int amount, PaymentMethod method) {
+    if (method == PaymentMethod.wallet) {
+      throw ArgumentError('Choisissez un compte Mobile Money.');
+    }
+    if (amount < minWithdrawal) {
+      throw ArgumentError('Montant minimum : $minWithdrawal FCFA.');
+    }
+    if (!p.wallet.move(
+      WalletTxKind.withdrawal,
+      -amount,
+      'Retrait ${method.label}',
+    )) {
+      throw ArgumentError('Solde insuffisant.');
+    }
+    notifyListeners();
+  }
+
+  /// Gains déjà payés par les patients, versés à la fin des soins.
+  int upcomingEarnings(Pro p) => bookings
+      .where((b) => b.pro == p && b.readyForCare)
+      .fold(0, (s, b) => s + b.proEarnings);
 
   void cancel(Booking b, {String reason = 'Annulé par le patient'}) {
     if (b.status != BookingStatus.pending &&
@@ -283,10 +333,20 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Les remboursements reviennent sur le solde MyNurse du patient.
   void _cancel(Booking b, String reason) {
     b.status = BookingStatus.cancelled;
     b.cancelReason = reason;
-    if (b.paid) b.refunded = true;
+    if (b.paid) {
+      b.refunded = true;
+      if (b.mine) {
+        wallet.move(
+          WalletTxKind.refund,
+          b.price,
+          'Remboursement · ${b.service.name}',
+        );
+      }
+    }
   }
 
   void submitCareLog(Booking b, CareLog log) {
@@ -294,6 +354,11 @@ class AppState extends ChangeNotifier {
     b.careLog = log;
     b.status = BookingStatus.done;
     b.pro.careCount++;
+    b.pro.wallet.move(
+      WalletTxKind.earning,
+      b.proEarnings,
+      '${b.service.name} · ${b.patientName}',
+    );
     notifyListeners();
   }
 
@@ -325,6 +390,10 @@ class AppState extends ChangeNotifier {
       bookings.where((b) => b.readyForCare).fold(0, (s, b) => s + b.price);
   int get refundTotal =>
       bookings.where((b) => b.refunded).fold(0, (s, b) => s + b.price);
+
+  /// Argent des clients et des soignants conservé par MyNurse.
+  int get clientBalances => wallet.balance;
+  int get proBalances => pros.fold(0, (s, p) => s + p.wallet.balance);
 
   void _seed() {
     final now = DateTime.now();
@@ -376,9 +445,45 @@ class AppState extends ChangeNotifier {
       scheduledAt: at(-3, 10),
       hasPrescription: false,
     );
+    wallet.move(
+      WalletTxKind.topUp,
+      25000,
+      'Recharge Orange Money',
+      at: at(-5, 19),
+    );
+    wallet.move(
+      WalletTxKind.payment,
+      -past.price,
+      '${past.service.name} · ${aya.name}',
+      at: at(-4, 18),
+    );
     past.status = BookingStatus.done;
-    past.paymentMethod = PaymentMethod.orange;
+    past.paymentMethod = PaymentMethod.wallet;
     past.paidAt = at(-4, 18);
+    aya.wallet.move(
+      WalletTxKind.earning,
+      5100,
+      'Injection · Koffi Yao',
+      at: at(-6, 11),
+    );
+    aya.wallet.move(
+      WalletTxKind.earning,
+      12750,
+      'Perfusion · Marie Kouadio',
+      at: at(-5, 15),
+    );
+    aya.wallet.move(
+      WalletTxKind.withdrawal,
+      -15000,
+      'Retrait Wave',
+      at: at(-5, 20),
+    );
+    aya.wallet.move(
+      WalletTxKind.earning,
+      past.proEarnings,
+      '${past.service.name} · ${past.patientName}',
+      at: at(-3, 11),
+    );
     past.careLog = CareLog(
       arrivedAt: at(-3, 10),
       leftAt: at(-3, 10).add(const Duration(minutes: 35)),
