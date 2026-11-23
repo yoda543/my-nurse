@@ -32,13 +32,17 @@ class _HealthRecordScreenState extends State<HealthRecordScreen> {
     super.dispose();
   }
 
-  void _save() {
-    AppScope.of(context).updateHealthRecord(
-      widget.patient,
-      allergies: _allergies.text.trim(),
-      history: _history.text.trim(),
-      treatments: _treatments.text.trim(),
+  Future<void> _save() async {
+    final ok = await runAction(
+      context,
+      () => AppScope.of(context).updateHealthRecord(
+        widget.patient,
+        allergies: _allergies.text.trim(),
+        history: _history.text.trim(),
+        treatments: _treatments.text.trim(),
+      ),
     );
+    if (!ok || !mounted) return;
     setState(() => _dirty = false);
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('Carnet enregistré.')));

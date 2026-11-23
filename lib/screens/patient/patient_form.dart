@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../app_state.dart';
 import '../../models.dart';
+import '../../widgets.dart';
 
 const _relations = ['Mère', 'Père', 'Conjoint(e)', 'Enfant', 'Autre proche'];
 
@@ -36,14 +37,17 @@ class _PatientFormState extends State<_PatientForm> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    final p = AppScope.of(context).addPatient(
-      name: _name.text.trim(),
-      relation: _relation,
-      allergies: _allergies.text.trim(),
-    );
-    Navigator.of(context).pop(p);
+    Patient? p;
+    final ok = await runAction(context, () async {
+      p = await AppScope.of(context).addPatient(
+        name: _name.text.trim(),
+        relation: _relation,
+        allergies: _allergies.text.trim(),
+      );
+    });
+    if (ok && mounted) Navigator.of(context).pop(p);
   }
 
   @override

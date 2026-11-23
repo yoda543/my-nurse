@@ -5,10 +5,27 @@ Des soignants vérifiés, des soins suivis, partout à Abidjan.
 Application Flutter (Android d'abord, puis iOS) : mise en relation entre patients et
 professionnels de santé pour des soins à domicile.
 
-## État actuel
+## Deux modes
 
-L'app tourne en **mode démo** : les données sont en mémoire (`lib/data/demo_data.dart`),
-rien n'est enregistré sur un serveur, aucun SMS n'est envoyé, aucun argent n'est débité.
+- **Connecté (par défaut)** : `flutter run`. L'app utilise la base Supabase `my-nurse`,
+  avec connexion par code reçu par e-mail. Les données sont réelles.
+- **Démonstration** : `flutter run --dart-define=DEMO=true`. Tout est en mémoire, avec des
+  comptes fictifs ; c'est la version publiée en démo web.
+
+En mode connecté, le paiement Mobile Money et la recharge du solde attendent le compte
+marchand (CinetPay ou PayDunya) : le paiement avec le solde fonctionne déjà.
+
+### Réglages Supabase à faire dans le tableau de bord
+
+1. **Authentication > Email Templates > Magic Link** : ajouter `{{ .Token }}` dans le
+   message, pour que l'e-mail contienne le code à 6 chiffres.
+2. **Authentication > SMTP Settings** : le serveur d'e-mails par défaut n'écrit qu'aux
+   membres de l'équipe du projet, avec un petit quota. Avant d'ouvrir l'app à d'autres
+   personnes, brancher un SMTP (Brevo : 300 e-mails par jour gratuits).
+3. **Compte administrateur** : se connecter une première fois avec « Je cherche un
+   soignant », puis passer le profil en `admin` (table `profiles`).
+
+## Mode démonstration
 
 Comptes de démonstration (code SMS : `123456`) :
 
@@ -78,8 +95,7 @@ Nominatim auto-hébergé ou à un service comme LocationIQ (offre gratuite).
 
 ## Pas encore fait
 
-- Branchement de l'app à Supabase (le schéma est prêt, voir plus bas).
-- Envoi réel des SMS de connexion (fournisseur SMS à choisir).
+- Connexion par SMS (aujourd'hui : code par e-mail ; fournisseur SMS à choisir).
 - Paiement réel : agrégateur CinetPay ou PayDunya, avec une fonction serveur qui reçoit
   ses confirmations et appelle `confirm_payment` (soin payé en Mobile Money) ou
   `confirm_topup` (recharge), et qui exécute les retraits de la table `withdrawals`.
@@ -102,7 +118,7 @@ flutter test
 
 ## Base de données
 
-Projet Supabase : `my-nurse` (région Francfort). Les migrations `0001` à `0005` y sont
+Projet Supabase : `my-nurse` (région Francfort). Les migrations `0001` à `0006` y sont
 appliquées ; la vérification des délais tourne chaque minute (`pg_cron`). Un essai de bout
 en bout (inscription, validation, réservation, recharge, paiement, compte rendu) a été joué
 sur le projet puis annulé : la base est vide et prête.
@@ -114,6 +130,8 @@ sur le projet puis annulé : la base est vide et prête.
 - `supabase/migrations/0004_business_rules.sql` : délais, créneaux, annulation, suivis,
   Premium, parrainage, reçus.
 - `supabase/migrations/0005_cron.sql` : expiration automatique des demandes chaque minute.
+- `supabase/migrations/0006_app_link.sql` : position GPS du soin, fiche patient visible
+  par le soignant dès la demande.
 
 Le prix, le statut d'un soin, le paiement et la vérification des soignants sont fixés côté
 serveur, jamais par l'app. Le paiement n'est confirmé que par `confirm_payment`, appelable
@@ -122,9 +140,24 @@ négatif et une même recharge ne peut pas être créditée deux fois. `0001`, `
 été testés sur PostgreSQL 16 avec des scénarios complets ; `0002` n'a pas pu l'être hors de
 Supabase.
 
+## Tests
+
+```bash
+flutter test
+```
+
+Tests qui appellent les vrais services (base Supabase avec des comptes d'essai à créer,
+service d'adresses OpenStreetMap) :
+
+```bash
+flutter test --tags live --run-skipped
+```
+
 ## Organisation du code
 
 - `lib/rules.dart` : toutes les règles métier et leurs valeurs
 - `lib/models.dart` : modèles (soins, suivis, soignants, soldes)
-- `lib/app_state.dart` : état et actions de l'app, à remplacer par les appels Supabase
+- `lib/app_state.dart` : état et actions de l'app (démo en mémoire, ou base en ligne)
+- `lib/backend/remote.dart` : accès à Supabase (connexion, lecture, actions)
+- `lib/config.dart` : mode démo, adresse et clé publiable du projet
 - `lib/screens/patient/`, `lib/screens/pro/`, `lib/screens/admin/` : écrans des trois espaces

@@ -1,7 +1,9 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app_state.dart';
+import '../../backend/remote.dart' show PickedFile;
 import '../../format.dart';
 import '../../models.dart';
 import '../../widgets.dart';
@@ -27,6 +29,47 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
   final Map<String, TextEditingController> _prices = {};
   final Set<String> _selected = {};
   final Set<DocType> _docs = {};
+
+  /// Fichiers choisis (base en ligne) : la pièce est envoyée à l'inscription.
+  final Map<DocType, PickedFile> _files = {};
+  bool _sending = false;
+
+  static const _maxFileBytes = 5 * 1024 * 1024;
+
+  Future<void> _toggleDoc(AppState app, DocType d) async {
+    if (_docs.contains(d)) {
+      setState(() {
+        _docs.remove(d);
+        _files.remove(d);
+      });
+      return;
+    }
+    if (!app.isRemote) {
+      setState(() => _docs.add(d));
+      return;
+    }
+    final picked = await FilePicker.pickFiles(
+      dialogTitle: d.label,
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'pdf'],
+    );
+    if (picked.isEmpty || !mounted) return;
+    final file = picked.first;
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
+    if (bytes.length > _maxFileBytes) {
+      setState(
+        () => _error = '${d.label} : fichier trop lourd (5 Mo maximum).',
+      );
+      return;
+    }
+    setState(() {
+      _files[d] = (name: file.name, bytes: bytes);
+      _docs.add(d);
+      _error = null;
+    });
+  }
+
   bool _night = false;
   bool _charter = false;
   String? _error;
@@ -53,7 +96,8 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
     ),
   );
 
-  void _submit(AppState app) {
+  Future<void> _submit(AppState app) async {
+    if (_sending) return;
     setState(() => _error = null);
     final formOk = _formKey.currentState!.validate();
     final services = app.services.where((s) => s.proType == _type);
@@ -82,19 +126,25 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
       );
       return;
     }
-    app.registerPro(
-      name: _name.text.trim(),
-      phone: app.sessionPhone,
-      type: _type,
-      communes: communes.where(_communes.contains).toList(),
-      prices: {for (final s in chosen) s.id: int.parse(_priceFor(s).text)},
-      yearsExperience: int.parse(_years.text),
-      bio: _bio.text.trim(),
-      orderNumber: _order.text.trim(),
-      nightAvailable: _night,
-      documents: requiredDocs(_type).toSet(),
-      referralCode: _referral.text,
+    setState(() => _sending = true);
+    await runAction(
+      context,
+      () => app.registerPro(
+        name: _name.text.trim(),
+        phone: app.sessionPhone,
+        type: _type,
+        communes: communes.where(_communes.contains).toList(),
+        prices: {for (final s in chosen) s.id: int.parse(_priceFor(s).text)},
+        yearsExperience: int.parse(_years.text),
+        bio: _bio.text.trim(),
+        orderNumber: _order.text.trim(),
+        nightAvailable: _night,
+        documents: requiredDocs(_type).toSet(),
+        referralCode: _referral.text,
+        files: _files,
+      ),
     );
+    if (mounted) setState(() => _sending = false);
   }
 
   @override
@@ -248,14 +298,11 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
                         ),
                         title: Text(d.label),
                         subtitle: Text(
-                          _docs.contains(d) ? 'Ajouté' : 'À ajouter',
+                          _files[d]?.name ??
+                              (_docs.contains(d) ? 'Ajouté' : 'À ajouter'),
                         ),
                         trailing: TextButton(
-                          onPressed: () => setState(
-                            () => _docs.contains(d)
-                                ? _docs.remove(d)
-                                : _docs.add(d),
-                          ),
+                          onPressed: () => _toggleDoc(app, d),
                           child: Text(
                             _docs.contains(d) ? 'Retirer' : 'Ajouter',
                           ),
@@ -265,8 +312,10 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Mode démo : aucun fichier n’est envoyé.',
+              Text(
+                app.isRemote
+                    ? 'Photo ou PDF, 5 Mo maximum. Seule l’équipe MyNurse les voit.'
+                    : 'Mode démo : aucun fichier n’est envoyé.',
                 style: TextStyle(color: Colors.black54, fontSize: 13),
               ),
               const SizedBox(height: 12),
@@ -299,7 +348,7 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
               ],
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: () => _submit(app),
+                onPressed: _sending ? null : () => _submit(app),
                 child: const Text('Envoyer mon dossier'),
               ),
             ],
@@ -445,8 +494,10 @@ class ProStatusScreen extends StatelessWidget {
               const Spacer(),
               if (pro.status == VerificationStatus.rejected) ...[
                 FilledButton(
-                  onPressed: () =>
-                      app.resubmitPro(pro, requiredDocs(pro.type).toSet()),
+                  onPressed: () => runAction(
+                    context,
+                    () => app.resubmitPro(pro, requiredDocs(pro.type).toSet()),
+                  ),
                   child: const Text('Renvoyer mon dossier complété'),
                 ),
                 const SizedBox(height: 12),

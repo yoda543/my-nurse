@@ -346,10 +346,13 @@ class _ProProfileTab extends StatelessWidget {
                                   );
                                   return;
                                 }
-                                app.updateProAvailability(
-                                  p,
-                                  communes: next,
-                                  nightAvailable: p.nightAvailable,
+                                runAction(
+                                  context,
+                                  () => app.updateProAvailability(
+                                    p,
+                                    communes: next,
+                                    nightAvailable: p.nightAvailable,
+                                  ),
                                 );
                               },
                             ),
@@ -358,10 +361,13 @@ class _ProProfileTab extends StatelessWidget {
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         value: p.nightAvailable,
-                        onChanged: (v) => app.updateProAvailability(
-                          p,
-                          communes: p.communes,
-                          nightAvailable: v,
+                        onChanged: (v) => runAction(
+                          context,
+                          () => app.updateProAvailability(
+                            p,
+                            communes: p.communes,
+                            nightAvailable: v,
+                          ),
                         ),
                         title: const Text('Disponible la nuit'),
                         subtitle: const Text('21 h – 6 h, majoration de 50 %'),
@@ -411,14 +417,11 @@ class _ProProfileTab extends StatelessWidget {
   }
 }
 
-void _respond(BuildContext context, Booking b, {required bool accept}) {
-  try {
-    AppScope.of(context).respond(b, accept: accept);
-  } on BusinessRuleError catch (e) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(e.message)));
-  }
-}
+Future<void> _respond(
+  BuildContext context,
+  Booking b, {
+  required bool accept,
+}) => runAction(context, () => AppScope.of(context).respond(b, accept: accept));
 
 Future<void> _cancelByPro(BuildContext context, Booking b) async {
   final ctrl = TextEditingController();
@@ -466,7 +469,9 @@ Future<void> _cancelByPro(BuildContext context, Booking b) async {
     ),
   );
   ctrl.dispose();
-  if (reason != null) app.cancelByPro(b, reason);
+  if (reason != null && context.mounted) {
+    await runAction(context, () => app.cancelByPro(b, reason));
+  }
 }
 
 class _PremiumCard extends StatelessWidget {
@@ -526,19 +531,20 @@ class _PremiumCard extends StatelessWidget {
             ],
             const SizedBox(height: 12),
             OutlinedButton(
-              onPressed: () {
-                try {
-                  app.subscribePremium(pro);
-                  ScaffoldMessenger.of(context).showSnackBar(
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final ok = await runAction(
+                  context,
+                  () => app.subscribePremium(pro),
+                );
+                if (ok) {
+                  messenger.showSnackBar(
                     SnackBar(
                       content: Text(
                         'Pro Premium activé jusqu’au ${dateTimeLabel(pro.premiumUntil!)}.',
                       ),
                     ),
                   );
-                } on BusinessRuleError catch (e) {
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(SnackBar(content: Text(e.message)));
                 }
               },
               child: Text(

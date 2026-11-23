@@ -120,13 +120,17 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
     }
   }
 
-  void _submit() {
+  bool _sending = false;
+
+  Future<void> _submit() async {
+    if (_sending) return;
     setState(() => _error = null);
     if (!_formKey.currentState!.validate()) return;
     final app = AppScope.of(context);
+    setState(() => _sending = true);
     try {
       if (_recurring) {
-        app.bookContract(
+        await app.bookContract(
           service: widget.service,
           pro: widget.pro,
           commune: app.commune,
@@ -140,7 +144,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
           location: _point,
         );
       } else {
-        app.book(
+        await app.book(
           service: widget.service,
           pro: widget.pro,
           commune: app.commune,
@@ -155,7 +159,16 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
     } on BusinessRuleError catch (e) {
       setState(() => _error = e.message);
       return;
+    } catch (_) {
+      setState(
+        () => _error =
+            'Connexion impossible. Vérifiez votre réseau et réessayez.',
+      );
+      return;
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
+    if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
         builder: (_) => _ConfirmationScreen(
@@ -429,7 +442,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
               ],
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: _submit,
+                onPressed: _sending ? null : _submit,
                 child: Text(
                   _recurring
                       ? 'Demander le suivi (${dates.length} séances)'

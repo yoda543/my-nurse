@@ -34,23 +34,23 @@ const _nominatim = {
 
 void main() {
   group('commune à partir de la position', () {
-    test('la commune la plus proche', () {
+    test('la commune la plus proche', () async {
       expect(nearestCommune(const GeoPoint(5.3220, -4.0200)), 'Plateau');
       expect(nearestCommune(const GeoPoint(5.3450, -4.0800)), 'Yopougon');
       expect(nearestCommune(const GeoPoint(5.3560, -3.8800)), 'Bingerville');
     });
 
-    test('hors zone au-delà de 8 km (Grand-Bassam)', () {
+    test('hors zone au-delà de 8 km (Grand-Bassam)', () async {
       expect(nearestCommune(const GeoPoint(5.2118, -3.7388)), isNull);
     });
 
-    test('la commune citée dans l’adresse, Riviera avant Cocody', () {
+    test('la commune citée dans l’adresse, Riviera avant Cocody', () async {
       expect(communeFromText('Riviera Palmeraie, Cocody'), 'Riviera');
       expect(communeFromText('Angré 8e tranche, Cocody'), 'Cocody');
       expect(communeFromText('Rue sans nom'), isNull);
     });
 
-    test('distance entre Plateau et Cocody : environ 5 km', () {
+    test('distance entre Plateau et Cocody : environ 5 km', () async {
       final d = distanceKm(
         communeCenters['Plateau']!,
         communeCenters['Cocody']!,
@@ -60,14 +60,27 @@ void main() {
   });
 
   group('adresse lisible', () {
-    test('quartier, rue et commune, sans doublon', () {
+    test('quartier, rue et commune, sans doublon', () async {
+      expect(formatNominatim(_nominatim), 'Angré 8e tranche, Rue L125, Cocody');
+    });
+
+    test('réponse réelle : la commune vient du libellé complet', () async {
+      // Réponse d'OpenStreetMap pour 5.3967, -3.9890 (relevée le 23/11/2026).
       expect(
-        formatNominatim(_nominatim),
-        'Angré 8e tranche, Rue L125, Cocody, Abidjan',
+        formatNominatim({
+          'display_name': 'Cité Sicogi 1001 logements, Angré, Cocody, Abidjan, Côte d’Ivoire',
+          'address': {
+            'quarter': 'Cité Sicogi 1001 logements',
+            'suburb': 'Angré',
+            'city': 'Abidjan',
+            'country': 'Côte d’Ivoire',
+          },
+        }),
+        'Cité Sicogi 1001 logements, Angré, Cocody',
       );
     });
 
-    test('numéro de rue si connu', () {
+    test('numéro de rue si connu', () async {
       expect(
         formatNominatim({
           'address': {
@@ -88,7 +101,7 @@ void main() {
       });
       final address = await DeviceLocator(client: client)
           .reverseGeocode(const GeoPoint(5.3967, -3.989));
-      expect(address, 'Angré 8e tranche, Rue L125, Cocody, Abidjan');
+      expect(address, 'Angré 8e tranche, Rue L125, Cocody');
       expect(called!.host, 'nominatim.openstreetmap.org');
       expect(called!.queryParameters['lat'], '5.3967');
     });
@@ -159,7 +172,7 @@ void main() {
         locator: FakeLocator(angre),
       );
       final place = await app.detectPlace();
-      final b = app.book(
+      final b = await app.book(
         service: app.services.firstWhere((s) => s.id == 'pansement'),
         pro: app.pros.first,
         commune: app.commune,
@@ -174,19 +187,22 @@ void main() {
       );
     });
 
-    test('un soignant qui n’intervient pas dans la commune est refusé', () {
-      final app = AppState(clock: () => DateTime(2030, 1, 1, 8));
-      expect(
-        () => app.book(
-          service: app.services.firstWhere((s) => s.id == 'pansement'),
-          pro: app.pros.first, // Aya : Cocody, Riviera, Bingerville
-          commune: 'Yopougon',
-          address: 'Niangon, Yopougon',
-          scheduledAt: DateTime(2030, 1, 10, 10),
-          hasPrescription: false,
-        ),
-        throwsA(isA<BusinessRuleError>()),
-      );
-    });
+    test(
+      'un soignant qui n’intervient pas dans la commune est refusé',
+      () async {
+        final app = AppState(clock: () => DateTime(2030, 1, 1, 8));
+        expect(
+          () => app.book(
+            service: app.services.firstWhere((s) => s.id == 'pansement'),
+            pro: app.pros.first, // Aya : Cocody, Riviera, Bingerville
+            commune: 'Yopougon',
+            address: 'Niangon, Yopougon',
+            scheduledAt: DateTime(2030, 1, 10, 10),
+            hasPrescription: false,
+          ),
+          throwsA(isA<BusinessRuleError>()),
+        );
+      },
+    );
   });
 }

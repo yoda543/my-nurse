@@ -1,8 +1,14 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'backend/remote.dart';
 import 'data/demo_data.dart';
 import 'location.dart';
 import 'models.dart';
+
+/// Le paiement Mobile Money attend le compte marchand chez l'agrégateur.
+const _mobileMoneySoon =
+    'Le paiement Mobile Money arrive bientôt. Pour l’instant, payez avec '
+    'votre solde MyNurse.';
 
 /// Refus d'une action pour une raison métier, avec un message à afficher.
 class BusinessRuleError implements Exception {
@@ -14,15 +20,30 @@ class BusinessRuleError implements Exception {
   String toString() => message;
 }
 
-/// État de l'application en mode démo (en mémoire).
-/// Chaque méthode correspond à une écriture contrôlée côté serveur
-/// (voir supabase/migrations) : mêmes règles, mêmes refus.
+/// État de l'application.
+///
+/// Sans [remote], tout se passe en mémoire avec des données de démonstration.
+/// Avec [remote], chaque action est envoyée à la base Supabase, qui applique
+/// les mêmes règles, puis les données sont rechargées depuis le serveur.
 class AppState extends ChangeNotifier {
-  AppState({bool seed = true, DateTime Function()? clock, Locator? locator})
-    : _clock = clock ?? DateTime.now,
-      locator = locator ?? DeviceLocator(demoFallback: true) {
-    if (seed) _seed();
+  AppState({
+    bool seed = true,
+    DateTime Function()? clock,
+    Locator? locator,
+    this.remote,
+  }) : _clock = clock ?? DateTime.now,
+       locator = locator ?? DeviceLocator(demoFallback: remote == null) {
+    if (seed && remote == null) _seed();
   }
+
+  /// Base en ligne (null en mode démo).
+  final RemoteBackend? remote;
+  bool get isRemote => remote != null;
+
+  /// Nom du titulaire du compte (base en ligne).
+  String fullName = '';
+  int _remoteClientBalances = 0;
+  int _remoteProBalances = 0;
 
   final DateTime Function() _clock;
 
@@ -38,8 +59,8 @@ class AppState extends ChangeNotifier {
   /// Numéro du soignant de démonstration déjà inscrit.
   static const demoProPhone = '0500000000';
 
-  final List<CareService> services = demoServices;
-  final List<Pro> pros = buildDemoPros();
+  final List<CareService> services = [...demoServices];
+  late final List<Pro> pros = remote == null ? buildDemoPros() : <Pro>[];
   final List<Booking> bookings = [];
 
   UserRole? role;
@@ -53,9 +74,9 @@ class AppState extends ChangeNotifier {
   int premiumRevenue = 0;
 
   /// Le titulaire du compte et les proches qu'il gère.
-  late final List<Patient> patients = [
-    Patient(id: 'P0', name: patientName, birthYear: 1988),
-  ];
+  late final List<Patient> patients = remote == null
+      ? [Patient(id: 'P0', name: patientName, birthYear: 1988)]
+      : <Patient>[];
 
   /// Porte-monnaie du compte patient connecté.
   final Wallet wallet = Wallet();
@@ -91,7 +112,99 @@ class AppState extends ChangeNotifier {
     role = null;
     sessionPhone = '';
     currentPro = null;
+    if (remote != null) {
+      remote!.signOut();
+      pros.clear();
+      bookings.clear();
+      patients.clear();
+      wallet.replaceWith(0, const []);
+      fullName = '';
+    }
     notifyListeners();
+  }
+
+  // --------------------------------------------------- base en ligne
+  /// Envoie le code de connexion par e-mail.
+  Future<void> sendCode(String email, UserRole wanted) =>
+      remote!.sendCode(email, role: wanted);
+
+  /// Vérifie le code puis ouvre le compte. Le rôle vient de la base.
+  Future<void> verifyCode(String email, String code, UserRole wanted) async {
+    await remote!.verifyCode(email, code);
+    await _openSession(wanted);
+  }
+
+  /// Rouvre la session enregistrée sur le téléphone, s'il y en a une.
+  Future<void> restoreSession() async {
+    if (remote?.signedIn ?? false) await _openSession(null);
+  }
+
+  Future<void> _openSession(UserRole? wanted) async {
+    final snap = await remote!.load();
+    String? refusal;
+    if (wanted == UserRole.admin && snap.role != UserRole.admin) {
+      refusal = 'Ce compte n’a pas accès à l’administration.';
+    } else if (wanted == UserRole.pro && snap.role == UserRole.patient) {
+      refusal =
+          'Cette adresse est déjà celle d’un compte patient. Utilisez une '
+          'autre adresse pour votre compte soignant.';
+    } else if (wanted == UserRole.patient && snap.role == UserRole.pro) {
+      refusal =
+          'Cette adresse est celle d’un compte soignant. Utilisez « Je suis '
+          'professionnel de santé ».';
+    }
+    if (refusal != null) {
+      await remote!.signOut();
+      throw BusinessRuleError(refusal);
+    }
+    _apply(snap);
+    role = snap.role;
+    notifyListeners();
+  }
+
+  /// Recharge les données depuis le serveur.
+  Future<void> refresh() async {
+    final r = remote;
+    if (r == null || !r.signedIn || role == null) return;
+    _apply(await r.load());
+    notifyListeners();
+  }
+
+  void _apply(RemoteSnapshot s) {
+    services
+      ..clear()
+      ..addAll(s.services);
+    pros
+      ..clear()
+      ..addAll(s.pros);
+    patients
+      ..clear()
+      ..addAll(s.myPatients);
+    bookings
+      ..clear()
+      ..addAll(s.bookings);
+    fullName = s.fullName;
+    if (s.fullName.isNotEmpty) patientName = s.fullName;
+    currentPro = pros.where((p) => p.id == remote!.userId).firstOrNull;
+    wallet.replaceWith(s.walletBalance, s.walletHistory);
+    _remoteClientBalances = s.clientBalances;
+    _remoteProBalances = s.proBalances;
+    premiumRevenue = s.premiumRevenue;
+  }
+
+  /// Un nouveau patient doit d'abord donner son nom.
+  bool get needsProfile =>
+      isRemote && role == UserRole.patient && patients.isEmpty;
+
+  Future<void> completeProfile(String name) async {
+    await remote!.completeProfile(name);
+    await refresh();
+  }
+
+  /// Exécute une action en ligne puis recharge les données.
+  Future<void> _online(Future<void> Function(RemoteBackend r) action) async {
+    await action(remote!);
+    await refresh();
   }
 
   void setCommune(String c) {
@@ -133,7 +246,7 @@ class AppState extends ChangeNotifier {
     return pros.where((p) => p.verified && p.referralCode == c).firstOrNull;
   }
 
-  Pro registerPro({
+  Future<Pro> registerPro({
     required String name,
     required String phone,
     required ProType type,
@@ -145,7 +258,8 @@ class AppState extends ChangeNotifier {
     required bool nightAvailable,
     required Set<DocType> documents,
     String referralCode = '',
-  }) {
+    Map<DocType, PickedFile> files = const {},
+  }) async {
     for (final e in prices.entries) {
       final s = services.firstWhere((s) => s.id == e.key);
       if (s.proType != type) {
@@ -158,6 +272,29 @@ class AppState extends ChangeNotifier {
     final referrer = findReferrer(referralCode);
     if (referralCode.trim().isNotEmpty && referrer == null) {
       throw const BusinessRuleError('Code de parrainage inconnu.');
+    }
+    if (remote != null) {
+      final missing = requiredDocs(type).where((d) => !files.containsKey(d));
+      if (missing.isNotEmpty) {
+        throw BusinessRuleError(
+          'Ajoutez : ${missing.map((d) => d.label).join(', ')}.',
+        );
+      }
+      await _online(
+        (r) => r.registerPro(
+          name: name,
+          type: type,
+          communes: communes,
+          prices: prices,
+          yearsExperience: yearsExperience,
+          bio: bio,
+          orderNumber: orderNumber,
+          nightAvailable: nightAvailable,
+          files: files,
+          referredBy: referrer?.id,
+        ),
+      );
+      return currentPro!;
     }
     final p = Pro(
       id: 'pro${pros.length + 1}',
@@ -181,8 +318,18 @@ class AppState extends ChangeNotifier {
   }
 
   /// Après un refus, le pro complète son dossier et le renvoie.
-  void resubmitPro(Pro p, Set<DocType> documents) {
+  Future<void> resubmitPro(
+    Pro p,
+    Set<DocType> documents, {
+    Map<DocType, PickedFile> files = const {},
+  }) async {
     if (p.status != VerificationStatus.rejected) return;
+    if (remote != null) {
+      return _online((r) async {
+        if (files.isNotEmpty) await r.uploadDocuments(files);
+        await r.resubmitPro();
+      });
+    }
     p.documents
       ..clear()
       ..addAll(documents);
@@ -191,12 +338,15 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateProAvailability(
+  Future<void> updateProAvailability(
     Pro p, {
     required List<String> communes,
     required bool nightAvailable,
-  }) {
+  }) async {
     if (communes.isEmpty) return;
+    if (remote != null) {
+      return _online((r) => r.updateAvailability(communes, nightAvailable));
+    }
     p.communes = communes;
     p.nightAvailable = nightAvailable;
     notifyListeners();
@@ -204,10 +354,11 @@ class AppState extends ChangeNotifier {
 
   // ------------------------------------------------------------- Premium
   /// Abonnement Pro Premium, payé avec le solde du soignant.
-  void subscribePremium(Pro p) {
+  Future<void> subscribePremium(Pro p) async {
     if (!p.verified) {
       throw const BusinessRuleError('Réservé aux soignants vérifiés.');
     }
+    if (remote != null) return _online((r) => r.subscribePremium());
     if (!p.wallet.move(
       WalletTxKind.subscription,
       -premiumPrice,
@@ -227,7 +378,7 @@ class AppState extends ChangeNotifier {
   List<Pro> prosWithStatus(VerificationStatus s) =>
       pros.where((p) => p.status == s).toList();
 
-  void verifyPro(Pro p) {
+  Future<void> verifyPro(Pro p) async {
     if (p.status != VerificationStatus.pending &&
         p.status != VerificationStatus.suspended) {
       return;
@@ -235,6 +386,7 @@ class AppState extends ChangeNotifier {
     if (p.missingDocs.isNotEmpty) {
       throw StateError('Dossier incomplet.');
     }
+    if (remote != null) return _online((r) => r.verifyPro(p.id));
     p.status = VerificationStatus.verified;
     p.rejectionReason = '';
     // Parrainage : un mois Premium offert au parrain, une seule fois.
@@ -250,16 +402,18 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void rejectPro(Pro p, String reason) {
+  Future<void> rejectPro(Pro p, String reason) async {
     if (p.status != VerificationStatus.pending) return;
+    if (remote != null) return _online((r) => r.rejectPro(p.id, reason));
     p.status = VerificationStatus.rejected;
     p.rejectionReason = reason;
     notifyListeners();
   }
 
   /// Suspend un pro : ses soins à venir sont annulés et remboursés en totalité.
-  void suspendPro(Pro p, String reason) {
+  Future<void> suspendPro(Pro p, String reason) async {
     if (p.status != VerificationStatus.verified) return;
+    if (remote != null) return _online((r) => r.suspendPro(p.id, reason));
     p.status = VerificationStatus.suspended;
     p.rejectionReason = reason;
     for (final b in bookings.where((b) => b.pro == p && _isOpen(b))) {
@@ -269,12 +423,22 @@ class AppState extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------- patients
-  Patient addPatient({
+  Future<Patient> addPatient({
     required String name,
     required String relation,
     String allergies = '',
     int? birthYear,
-  }) {
+  }) async {
+    if (remote != null) {
+      final id = await remote!.addPatient(
+        name: name,
+        relation: relation,
+        allergies: allergies,
+        birthYear: birthYear,
+      );
+      await refresh();
+      return patients.firstWhere((p) => p.id == id);
+    }
     final p = Patient(
       id: 'P${patients.length}',
       name: name,
@@ -287,12 +451,22 @@ class AppState extends ChangeNotifier {
     return p;
   }
 
-  void updateHealthRecord(
+  Future<void> updateHealthRecord(
     Patient p, {
     required String allergies,
     required String history,
     required String treatments,
-  }) {
+  }) async {
+    if (remote != null) {
+      return _online(
+        (r) => r.updatePatient(
+          p.id,
+          allergies: allergies,
+          history: history,
+          treatments: treatments,
+        ),
+      );
+    }
     p.allergies = allergies;
     p.history = history;
     p.treatments = treatments;
@@ -429,7 +603,7 @@ class AppState extends ChangeNotifier {
     return b;
   }
 
-  Booking book({
+  Future<Booking> book({
     required CareService service,
     required Pro pro,
     required String commune,
@@ -440,8 +614,23 @@ class AppState extends ChangeNotifier {
     Patient? patient,
     bool mine = true,
     GeoPoint? location,
-  }) {
+  }) async {
     _checkSlot(service, pro, scheduledAt, hasPrescription, commune: commune);
+    if (remote != null) {
+      final id = await remote!.book(
+        patientId: (patient ?? patients.first).id,
+        proId: pro.id,
+        serviceId: service.id,
+        commune: commune,
+        address: address,
+        at: scheduledAt,
+        hasPrescription: hasPrescription,
+        note: note,
+        location: location,
+      );
+      await refresh();
+      return bookings.firstWhere((b) => b.id == id);
+    }
     final b = _create(
       service: service,
       pro: pro,
@@ -459,7 +648,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Suivi régulier : plusieurs séances à la même heure, commission réduite.
-  Contract bookContract({
+  Future<Contract> bookContract({
     required CareService service,
     required Pro pro,
     required String commune,
@@ -471,7 +660,7 @@ class AppState extends ChangeNotifier {
     String note = '',
     Patient? patient,
     GeoPoint? location,
-  }) {
+  }) async {
     if (sessions < contractMinSessions || sessions > contractMaxSessions) {
       throw const BusinessRuleError(
         'Un suivi compte de $contractMinSessions à $contractMaxSessions '
@@ -481,6 +670,22 @@ class AppState extends ChangeNotifier {
     final dates = sessionDates(firstAt, frequency, sessions);
     for (final d in dates) {
       _checkSlot(service, pro, d, hasPrescription, commune: commune);
+    }
+    if (remote != null) {
+      final id = await remote!.bookContract(
+        patientId: (patient ?? patients.first).id,
+        proId: pro.id,
+        serviceId: service.id,
+        commune: commune,
+        address: address,
+        dates: dates,
+        frequency: frequency,
+        hasPrescription: hasPrescription,
+        note: note,
+        location: location,
+      );
+      await refresh();
+      return bookings.firstWhere((b) => b.contract?.id == id).contract!;
     }
     final c = Contract(id: 'C${_nextContract++}', frequency: frequency);
     for (var i = 0; i < dates.length; i++) {
@@ -505,7 +710,7 @@ class AppState extends ChangeNotifier {
 
   /// Réponse du soignant. Pour un suivi, la réponse vaut pour toutes les
   /// séances.
-  void respond(Booking b, {required bool accept}) {
+  Future<void> respond(Booking b, {required bool accept}) async {
     expireStale();
     final group =
         b.contract?.sessions
@@ -525,6 +730,7 @@ class AppState extends ChangeNotifier {
         }
       }
     }
+    if (remote != null) return _online((r) => r.respond(b.id, accept));
     for (final s in group) {
       s.status = accept ? BookingStatus.accepted : BookingStatus.refused;
       if (accept) s.acceptedAt = now;
@@ -538,11 +744,19 @@ class AppState extends ChangeNotifier {
   /// Paiement avec le solde ou en Mobile Money. En production, un paiement
   /// Mobile Money est confirmé par le webhook de l'agrégateur, jamais par
   /// l'app. Renvoie false si le solde ne suffit pas.
-  bool pay(Booking b, PaymentMethod method) {
+  Future<bool> pay(Booking b, PaymentMethod method) async {
     expireStale();
     if (!b.awaitingPayment) return false;
     final group = b.contract?.awaitingPayment.toList() ?? [b];
     final total = group.fold(0, (s, x) => s + x.price);
+    if (remote != null) {
+      if (method != PaymentMethod.wallet) {
+        throw const BusinessRuleError(_mobileMoneySoon);
+      }
+      if (wallet.balance < total) return false;
+      await _online((r) => r.payWithWallet(b.id));
+      return true;
+    }
     if (method == PaymentMethod.wallet &&
         !wallet.move(
           WalletTxKind.payment,
@@ -565,6 +779,8 @@ class AppState extends ChangeNotifier {
   /// Annule les demandes restées sans réponse et les rendez-vous non payés
   /// à temps. Renvoie le nombre de séances annulées.
   int expireStale() {
+    // En ligne, le serveur s'en charge chaque minute.
+    if (remote != null) return 0;
     var count = 0;
     for (final b in bookings) {
       if (b.status == BookingStatus.pending &&
@@ -583,7 +799,8 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------- porte-monnaie
   /// Recharge du solde patient. En production : confirmée par le webhook
   /// de l'agrégateur, jamais par l'app.
-  void topUp(int amount, PaymentMethod method) {
+  Future<void> topUp(int amount, PaymentMethod method) async {
+    if (remote != null) throw const BusinessRuleError(_mobileMoneySoon);
     if (method == PaymentMethod.wallet) {
       throw ArgumentError('Rechargez avec un compte Mobile Money.');
     }
@@ -600,12 +817,21 @@ class AppState extends ChangeNotifier {
   }
 
   /// Retrait des gains d'un soignant vers Mobile Money.
-  void withdraw(Pro p, int amount, PaymentMethod method) {
+  Future<void> withdraw(
+    Pro p,
+    int amount,
+    PaymentMethod method, {
+    String phone = '',
+  }) async {
     if (method == PaymentMethod.wallet) {
       throw ArgumentError('Choisissez un compte Mobile Money.');
     }
     if (amount < minWithdrawal) {
       throw ArgumentError('Montant minimum : $minWithdrawal FCFA.');
+    }
+    if (remote != null) {
+      if (amount > p.wallet.balance) throw ArgumentError('Solde insuffisant.');
+      return _online((r) => r.withdraw(amount, method, phone));
     }
     if (!p.wallet.move(
       WalletTxKind.withdrawal,
@@ -651,7 +877,11 @@ class AppState extends ChangeNotifier {
 
   /// Annulation par le patient : gratuite jusqu'à 2 h avant le soin, sinon la
   /// moitié du prix est versée au soignant.
-  void cancel(Booking b, {String reason = 'Annulé par le patient'}) {
+  Future<void> cancel(
+    Booking b, {
+    String reason = 'Annulé par le patient',
+  }) async {
+    if (remote != null) return _online((r) => r.cancel(b.id));
     for (final s in _cancellable(b)) {
       final fee = s.paid
           ? lateCancellationFee(
@@ -671,13 +901,14 @@ class AppState extends ChangeNotifier {
 
   /// Annulation par le soignant d'un soin confirmé : le patient est remboursé
   /// en totalité et l'annulation compte pour la fiabilité du soignant.
-  void cancelByPro(Booking b, String reason) {
+  Future<void> cancelByPro(Booking b, String reason) async {
     if (b.status != BookingStatus.accepted) {
       throw const BusinessRuleError('Seul un soin confirmé peut être annulé.');
     }
     if (reason.trim().isEmpty) {
       throw const BusinessRuleError('Indiquez le motif au patient.');
     }
+    if (remote != null) return _online((r) => r.cancelByPro(b.id, reason));
     for (final s in _cancellable(b)) {
       _cancel(s, 'Annulé par le soignant : $reason');
     }
@@ -716,7 +947,7 @@ class AppState extends ChangeNotifier {
   bool canLogCare(Booking b) =>
       b.readyForCare && !now.isBefore(b.careLogOpensAt);
 
-  void submitCareLog(Booking b, CareLog log) {
+  Future<void> submitCareLog(Booking b, CareLog log) async {
     if (!b.readyForCare) {
       throw const BusinessRuleError('Ce soin n’est pas confirmé et payé.');
     }
@@ -726,6 +957,7 @@ class AppState extends ChangeNotifier {
         '${_time(b.careLogOpensAt)}, le jour du soin.',
       );
     }
+    if (remote != null) return _online((r) => r.submitCareLog(b.id, log));
     b.careLog = log;
     b.status = BookingStatus.done;
     b.receiptNumber =
@@ -740,9 +972,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void rate(Booking b, int stars, String review) {
+  Future<void> rate(Booking b, int stars, String review) async {
     if (b.status != BookingStatus.done || b.rating != null) return;
     if (stars < 1 || stars > 5) return;
+    if (remote != null) {
+      return _online((r) => r.rate(b.id, b.pro.id, stars, review));
+    }
     b.rating = stars;
     b.review = review;
     final p = b.pro;
@@ -811,8 +1046,10 @@ class AppState extends ChangeNotifier {
   int get refundTotal => bookings.fold(0, (s, b) => s + b.refundAmount);
 
   /// Argent des clients et des soignants conservé par MyNurse.
-  int get clientBalances => wallet.balance;
-  int get proBalances => pros.fold(0, (s, p) => s + p.wallet.balance);
+  int get clientBalances => isRemote ? _remoteClientBalances : wallet.balance;
+  int get proBalances => isRemote
+      ? _remoteProBalances
+      : pros.fold(0, (s, p) => s + p.wallet.balance);
 
   static String _two(int n) => n.toString().padLeft(2, '0');
   static String _time(DateTime d) => '${_two(d.hour)}h${_two(d.minute)}';

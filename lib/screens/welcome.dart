@@ -4,15 +4,20 @@ import 'package:material_ui/material_ui.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../theme.dart';
+import 'email_login.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    void go(UserRole role) =>
-        Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => LoginScreen(role: role)));
+    final remote = AppScope.of(context).isRemote;
+    void go(UserRole role) => Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            remote ? EmailLoginScreen(role: role) : LoginScreen(role: role),
+      ),
+    );
     return Scaffold(
       backgroundColor: brandGreen,
       body: SafeArea(

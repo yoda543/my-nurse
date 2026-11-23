@@ -385,3 +385,26 @@ class LocationStatus extends StatelessWidget {
     );
   }
 }
+
+/// Lance une action et affiche la raison d'un éventuel refus.
+/// Renvoie true si l'action a réussi.
+Future<bool> runAction(
+  BuildContext context,
+  Future<void> Function() action,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  void show(String m) => messenger.showSnackBar(SnackBar(content: Text(m)));
+  try {
+    await action();
+    return true;
+  } on BusinessRuleError catch (e) {
+    show(e.message);
+  } on ArgumentError catch (e) {
+    show('${e.message}');
+  } on StateError catch (e) {
+    show(e.message);
+  } catch (_) {
+    show('Connexion impossible. Vérifiez votre réseau et réessayez.');
+  }
+  return false;
+}

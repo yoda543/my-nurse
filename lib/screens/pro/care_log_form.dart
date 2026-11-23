@@ -57,7 +57,10 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
     }
   }
 
-  void _submit() {
+  bool _sending = false;
+
+  Future<void> _submit() async {
+    if (_sending) return;
     setState(() => _error = null);
     if (!_formKey.currentState!.validate()) return;
     var left = _at(_departure);
@@ -68,8 +71,9 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
       setState(() => _error = "Vérifiez les heures d'arrivée et de départ.");
       return;
     }
+    setState(() => _sending = true);
     try {
-      AppScope.of(context).submitCareLog(
+      await AppScope.of(context).submitCareLog(
         widget.booking,
         CareLog(
           arrivedAt: arrived,
@@ -85,7 +89,16 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
     } on BusinessRuleError catch (e) {
       setState(() => _error = e.message);
       return;
+    } catch (_) {
+      setState(
+        () => _error =
+            'Connexion impossible. Vérifiez votre réseau et réessayez.',
+      );
+      return;
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Compte rendu enregistré et envoyé au patient.'),

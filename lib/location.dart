@@ -124,6 +124,15 @@ String formatNominatim(Map<String, dynamic> json) {
     ?field(['suburb']),
     ?field(['city_district', 'town', 'village', 'city']),
   ];
+  // La commune n'est pas toujours dans les champs (Angré → Cocody) : on la
+  // reprend du libellé complet. « Abidjan » n'apporte rien au soignant.
+  final commune = communeFromText((json['display_name'] as String?) ?? '');
+  if (commune != null &&
+      !parts.any((p) => p.toLowerCase() == commune.toLowerCase())) {
+    final i = parts.indexWhere((p) => p.toLowerCase() == 'abidjan');
+    i == -1 ? parts.add(commune) : parts.insert(i, commune);
+  }
+  parts.removeWhere((p) => p.toLowerCase() == 'abidjan');
   final unique = <String>[];
   for (final p in parts) {
     if (!unique.any((u) => u.toLowerCase() == p.toLowerCase())) unique.add(p);

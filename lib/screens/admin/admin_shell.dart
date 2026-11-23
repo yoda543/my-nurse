@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app_state.dart';
 import '../../format.dart';
@@ -195,6 +196,19 @@ class _PendingCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                   Expanded(child: Text(d.label)),
+                  if (app.isRemote && p.documentPaths[d] != null)
+                    TextButton(
+                      onPressed: () => runAction(context, () async {
+                        final url = await app.remote!.documentUrl(
+                          p.documentPaths[d]!,
+                        );
+                        await launchUrl(
+                          url,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      }),
+                      child: const Text('Voir'),
+                    ),
                 ],
               ),
             if (missing.isNotEmpty) ...[
@@ -211,7 +225,9 @@ class _PendingCard extends StatelessWidget {
                   child: OutlinedButton(
                     onPressed: () async {
                       final r = await _askReason(context, 'Refuser le dossier');
-                      if (r != null) app.rejectPro(p, r);
+                      if (r != null && context.mounted) {
+                        await runAction(context, () => app.rejectPro(p, r));
+                      }
                     },
                     child: const Text('Refuser'),
                   ),
@@ -219,7 +235,9 @@ class _PendingCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: missing.isEmpty ? () => app.verifyPro(p) : null,
+                    onPressed: missing.isEmpty
+                        ? () => runAction(context, () => app.verifyPro(p))
+                        : null,
                     child: const Text('Valider'),
                   ),
                 ),
@@ -281,12 +299,14 @@ class _ProsTab extends StatelessWidget {
               VerificationStatus.verified => TextButton(
                 onPressed: () async {
                   final r = await _askReason(context, 'Suspendre ${p.name}');
-                  if (r != null) app.suspendPro(p, r);
+                  if (r != null && context.mounted) {
+                    await runAction(context, () => app.suspendPro(p, r));
+                  }
                 },
                 child: const Text('Suspendre'),
               ),
               VerificationStatus.suspended => TextButton(
-                onPressed: () => app.verifyPro(p),
+                onPressed: () => runAction(context, () => app.verifyPro(p)),
                 child: const Text('Réactiver'),
               ),
               _ => null,

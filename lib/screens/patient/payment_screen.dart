@@ -44,11 +44,28 @@ class _PaymentScreenState extends State<PaymentScreen> {
     final app = AppScope.of(context);
     final messenger = ScaffoldMessenger.of(context);
     final nav = Navigator.of(context);
-    if (method != PaymentMethod.wallet) {
+    if (method != PaymentMethod.wallet && !app.isRemote) {
       await Future<void>.delayed(const Duration(milliseconds: 1200));
     }
     final due = app.amountDue(widget.booking);
-    if (!app.pay(widget.booking, method)) {
+    bool paid;
+    try {
+      paid = await app.pay(widget.booking, method);
+    } on BusinessRuleError catch (e) {
+      setState(() {
+        _busy = false;
+        _error = e.message;
+      });
+      return;
+    } catch (_) {
+      setState(() {
+        _busy = false;
+        _error = 'Connexion impossible. Vérifiez votre réseau et réessayez.';
+      });
+      return;
+    }
+    if (!mounted) return;
+    if (!paid) {
       setState(() {
         _busy = false;
         _error = widget.booking.awaitingPayment

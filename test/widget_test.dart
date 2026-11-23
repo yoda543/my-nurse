@@ -10,7 +10,7 @@ DateTime _now = DateTime(2030, 1, 1, 8);
 DateTime _clock() => _now;
 AppState _app() => AppState(clock: _clock);
 
-Booking _book(
+Future<Booking> _book(
   AppState app, {
   String service = 'pansement',
   DateTime? at,
@@ -30,21 +30,21 @@ void main() {
   setUp(() => _now = DateTime(2030, 1, 1, 8));
 
   group('prix', () {
-    test('majoration de nuit de 50 % et commission de 15 %', () {
+    test('majoration de nuit de 50 % et commission de 15 %', () async {
       final app = _app();
-      final day = _book(app);
+      final day = await _book(app);
       expect(day.price, 8000);
       expect(day.commission, 1200);
       expect(day.proEarnings, 6800);
 
-      final night = _book(app, at: DateTime(2030, 1, 10, 22));
+      final night = await _book(app, at: DateTime(2030, 1, 10, 22));
       expect(night.price, 12000);
       expect(night.proEarnings, 10200);
     });
   });
 
   group('cycle d’un soin', () {
-    test('demande, acceptation, paiement, compte rendu, note', () {
+    test('demande, acceptation, paiement, compte rendu, note', () async {
       final app = _app();
       final pro = app.pros.first;
       final before = pro.careCount;
@@ -53,14 +53,14 @@ void main() {
         leftAt: _day.add(const Duration(minutes: 30)),
         acts: 'Pansement refait',
       );
-      final b = _book(app);
+      final b = await _book(app);
       expect(b.status, BookingStatus.pending);
 
       // Pas de paiement avant l'acceptation.
-      app.pay(b, PaymentMethod.wave);
+      await app.pay(b, PaymentMethod.wave);
       expect(b.paid, isFalse);
 
-      app.respond(b, accept: true);
+      await app.respond(b, accept: true);
       expect(b.awaitingPayment, isTrue);
 
       // Pas de compte rendu tant que le patient n'a pas payé.
@@ -70,53 +70,53 @@ void main() {
       );
       expect(b.status, BookingStatus.accepted);
 
-      app.pay(b, PaymentMethod.wave);
+      await app.pay(b, PaymentMethod.wave);
       expect(b.readyForCare, isTrue);
       expect(app.escrowTotal, greaterThanOrEqualTo(b.price));
 
       _now = _day;
-      app.submitCareLog(b, log);
+      await app.submitCareLog(b, log);
       expect(b.status, BookingStatus.done);
       expect(pro.careCount, before + 1);
 
-      app.rate(b, 5, 'Très bien');
-      app.rate(b, 1, 'Deuxième note ignorée');
+      await app.rate(b, 5, 'Très bien');
+      await app.rate(b, 1, 'Deuxième note ignorée');
       expect(b.rating, 5);
     });
 
-    test('annulation après paiement : remboursement', () {
+    test('annulation après paiement : remboursement', () async {
       final app = _app();
-      final b = _book(app);
-      app.respond(b, accept: true);
-      app.pay(b, PaymentMethod.orange);
-      app.cancel(b);
+      final b = await _book(app);
+      await app.respond(b, accept: true);
+      await app.pay(b, PaymentMethod.orange);
+      await app.cancel(b);
       expect(b.status, BookingStatus.cancelled);
       expect(b.refunded, isTrue);
       expect(app.refundTotal, b.price);
     });
 
-    test('annulation avant paiement : rien à rembourser', () {
+    test('annulation avant paiement : rien à rembourser', () async {
       final app = _app();
-      final b = _book(app);
-      app.cancel(b);
+      final b = await _book(app);
+      await app.cancel(b);
       expect(b.refunded, isFalse);
     });
 
-    test('un soin terminé ne peut plus être annulé', () {
+    test('un soin terminé ne peut plus être annulé', () async {
       final app = _app();
       final done = app.patientBookings.firstWhere(
         (b) => b.status == BookingStatus.done,
       );
-      app.cancel(done);
+      await app.cancel(done);
       expect(done.status, BookingStatus.done);
     });
   });
 
   group('porte-monnaie', () {
-    test('recharge : limites et moyens acceptés', () {
+    test('recharge : limites et moyens acceptés', () async {
       final app = _app();
       final before = app.wallet.balance;
-      app.topUp(10000, PaymentMethod.orange);
+      await app.topUp(10000, PaymentMethod.orange);
       expect(app.wallet.balance, before + 10000);
       expect(app.wallet.history.first.kind, WalletTxKind.topUp);
       expect(() => app.topUp(100, PaymentMethod.wave), throwsArgumentError);
@@ -124,42 +124,42 @@ void main() {
       expect(() => app.topUp(5000, PaymentMethod.wallet), throwsArgumentError);
     });
 
-    test('payer avec le solde : refusé si insuffisant, débité sinon', () {
+    test('payer avec le solde : refusé si insuffisant, débité sinon', () async {
       final app = _app();
-      final b = _book(app);
-      app.respond(b, accept: true);
+      final b = await _book(app);
+      await app.respond(b, accept: true);
       app.wallet.move(WalletTxKind.payment, -app.wallet.balance, 'vider');
-      expect(app.pay(b, PaymentMethod.wallet), isFalse);
+      expect(await app.pay(b, PaymentMethod.wallet), isFalse);
       expect(b.paid, isFalse);
 
-      app.topUp(10000, PaymentMethod.wave);
-      expect(app.pay(b, PaymentMethod.wallet), isTrue);
+      await app.topUp(10000, PaymentMethod.wave);
+      expect(await app.pay(b, PaymentMethod.wallet), isTrue);
       expect(app.wallet.balance, 10000 - b.price);
       expect(b.readyForCare, isTrue);
     });
 
-    test('annulation : remboursement immédiat sur le solde', () {
+    test('annulation : remboursement immédiat sur le solde', () async {
       final app = _app();
-      final b = _book(app);
-      app.respond(b, accept: true);
-      app.pay(b, PaymentMethod.mtn);
+      final b = await _book(app);
+      await app.respond(b, accept: true);
+      await app.pay(b, PaymentMethod.mtn);
       final before = app.wallet.balance;
-      app.cancel(b);
+      await app.cancel(b);
       expect(app.wallet.balance, before + b.price);
       expect(app.wallet.history.first.kind, WalletTxKind.refund);
     });
 
-    test('le soignant est crédité à la fin du soin, puis retire', () {
+    test('le soignant est crédité à la fin du soin, puis retire', () async {
       final app = _app();
       final aya = app.pros.first;
-      final b = _book(app);
-      app.respond(b, accept: true);
-      app.pay(b, PaymentMethod.wave);
+      final b = await _book(app);
+      await app.respond(b, accept: true);
+      await app.pay(b, PaymentMethod.wave);
       final before = aya.wallet.balance;
       expect(app.upcomingEarnings(aya), greaterThanOrEqualTo(b.proEarnings));
 
       _now = _day;
-      app.submitCareLog(
+      await app.submitCareLog(
         b,
         CareLog(
           arrivedAt: _day,
@@ -177,12 +177,12 @@ void main() {
         () => app.withdraw(aya, aya.wallet.balance + 1, PaymentMethod.wave),
         throwsArgumentError,
       );
-      app.withdraw(aya, aya.wallet.balance, PaymentMethod.orange);
+      await app.withdraw(aya, aya.wallet.balance, PaymentMethod.orange);
       expect(aya.wallet.balance, 0);
       expect(aya.wallet.history.first.kind, WalletTxKind.withdrawal);
     });
 
-    test('démo : soldes de départ cohérents avec l’historique', () {
+    test('démo : soldes de départ cohérents avec l’historique', () async {
       final app = _app();
       int sum(Wallet w) => w.history.fold(0, (s, t) => s + t.amount);
       expect(app.wallet.balance, sum(app.wallet));
@@ -192,50 +192,56 @@ void main() {
   });
 
   group('soignants', () {
-    test('un nouveau soignant reste invisible jusqu’à la vérification', () {
-      final app = _app();
-      final pansement = app.services.firstWhere((s) => s.id == 'pansement');
-      final before = app.prosFor(pansement, 'Yopougon').length;
-      final p = app.registerPro(
-        name: 'Test Soignant',
-        phone: '0102030405',
-        type: ProType.infirmier,
-        communes: ['Yopougon'],
-        prices: {'pansement': 7000},
-        yearsExperience: 3,
-        bio: 'Infirmier diplômé.',
-        orderNumber: 'ONII-1',
-        nightAvailable: false,
-        documents: requiredDocs(ProType.infirmier).toSet(),
-      );
-      expect(p.status, VerificationStatus.pending);
-      expect(app.prosFor(pansement, 'Yopougon').length, before);
+    test(
+      'un nouveau soignant reste invisible jusqu’à la vérification',
+      () async {
+        final app = _app();
+        final pansement = app.services.firstWhere((s) => s.id == 'pansement');
+        final before = app.prosFor(pansement, 'Yopougon').length;
+        final p = await app.registerPro(
+          name: 'Test Soignant',
+          phone: '0102030405',
+          type: ProType.infirmier,
+          communes: ['Yopougon'],
+          prices: {'pansement': 7000},
+          yearsExperience: 3,
+          bio: 'Infirmier diplômé.',
+          orderNumber: 'ONII-1',
+          nightAvailable: false,
+          documents: requiredDocs(ProType.infirmier).toSet(),
+        );
+        expect(p.status, VerificationStatus.pending);
+        expect(app.prosFor(pansement, 'Yopougon').length, before);
 
-      app.verifyPro(p);
-      expect(app.prosFor(pansement, 'Yopougon').length, before + 1);
-    });
+        await app.verifyPro(p);
+        expect(app.prosFor(pansement, 'Yopougon').length, before + 1);
+      },
+    );
 
-    test('prix hors fourchette ou soin d’une autre profession refusés', () {
-      final app = _app();
-      Pro reg(Map<String, int> prices) => app.registerPro(
-        name: 'X',
-        phone: '0102030405',
-        type: ProType.infirmier,
-        communes: ['Cocody'],
-        prices: prices,
-        yearsExperience: 1,
-        bio: 'Bio',
-        orderNumber: 'ONII-2',
-        nightAvailable: false,
-        documents: requiredDocs(ProType.infirmier).toSet(),
-      );
-      expect(() => reg({'pansement': 100000}), throwsArgumentError);
-      expect(() => reg({'consultation': 20000}), throwsArgumentError);
-    });
+    test(
+      'prix hors fourchette ou soin d’une autre profession refusés',
+      () async {
+        final app = _app();
+        Future<Pro> reg(Map<String, int> prices) => app.registerPro(
+          name: 'X',
+          phone: '0102030405',
+          type: ProType.infirmier,
+          communes: ['Cocody'],
+          prices: prices,
+          yearsExperience: 1,
+          bio: 'Bio',
+          orderNumber: 'ONII-2',
+          nightAvailable: false,
+          documents: requiredDocs(ProType.infirmier).toSet(),
+        );
+        expect(() => reg({'pansement': 100000}), throwsArgumentError);
+        expect(() => reg({'consultation': 20000}), throwsArgumentError);
+      },
+    );
 
-    test('dossier incomplet : validation impossible', () {
+    test('dossier incomplet : validation impossible', () async {
       final app = _app();
-      final p = app.registerPro(
+      final p = await app.registerPro(
         name: 'Incomplet',
         phone: '0102030406',
         type: ProType.infirmier,
@@ -251,13 +257,13 @@ void main() {
       expect(p.status, VerificationStatus.pending);
     });
 
-    test('suspension : soins à venir annulés et remboursés', () {
+    test('suspension : soins à venir annulés et remboursés', () async {
       final app = _app();
       final aya = app.pros.first;
       final paid = app.bookings.firstWhere(
         (b) => b.pro == aya && b.readyForCare,
       );
-      app.suspendPro(aya, 'Plainte en cours');
+      await app.suspendPro(aya, 'Plainte en cours');
       expect(aya.status, VerificationStatus.suspended);
       expect(paid.status, BookingStatus.cancelled);
       expect(paid.refunded, isTrue);
@@ -265,7 +271,7 @@ void main() {
       expect(app.prosFor(pansement, 'Cocody').contains(aya), isFalse);
     });
 
-    test('connexion : numéro connu ou inscription', () {
+    test('connexion : numéro connu ou inscription', () async {
       final app = _app();
       app.loginPro(AppState.demoProPhone);
       expect(app.currentPro, app.pros.first);
@@ -276,27 +282,27 @@ void main() {
   });
 
   group('patients', () {
-    test('réserver pour un proche : ses allergies suivent', () {
+    test('réserver pour un proche : ses allergies suivent', () async {
       final app = _app();
-      final mother = app.addPatient(
+      final mother = await app.addPatient(
         name: 'Maman Bamba',
         relation: 'Mère',
         allergies: 'Pénicilline',
       );
-      final b = _book(app, service: 'injection', patient: mother);
+      final b = await _book(app, service: 'injection', patient: mother);
       expect(b.patientName, 'Maman Bamba');
       expect(b.patient.allergies, 'Pénicilline');
       expect(app.patientBookings.every((e) => e.mine), isTrue);
     });
 
-    test('le carnet regroupe les comptes rendus de la personne', () {
+    test('le carnet regroupe les comptes rendus de la personne', () async {
       final app = _app();
       final me = app.patients.first;
       expect(app.careHistory(me), hasLength(1));
       expect(app.careHistory(me).first.careLog!.acts, contains('pansement'));
     });
 
-    test('recherche : seuls les pros vérifiés de la commune', () {
+    test('recherche : seuls les pros vérifiés de la commune', () async {
       final app = _app();
       final kine = app.services.firstWhere((s) => s.id == 'kine');
       expect(app.prosFor(kine, 'Yopougon'), isEmpty);

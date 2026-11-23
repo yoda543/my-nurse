@@ -114,6 +114,15 @@ class Wallet {
   int balance = 0;
   final List<WalletTx> history = [];
 
+  /// Remplace le contenu par ce que renvoie le serveur.
+  void replaceWith(int newBalance, List<WalletTx> txs) {
+    balance = newBalance;
+    history
+      ..clear()
+      ..addAll(txs)
+      ..sort((a, b) => b.at.compareTo(a.at));
+  }
+
   /// Applique un mouvement ; refuse tout solde négatif.
   bool move(WalletTxKind kind, int amount, String label, {DateTime? at}) {
     if (amount == 0 || balance + amount < 0) return false;
@@ -206,6 +215,9 @@ class Pro {
   /// Pièces justificatives déposées.
   final Set<DocType> documents;
 
+  /// Emplacement des fichiers déposés (base en ligne).
+  final Map<DocType, String> documentPaths = {};
+
   /// Gains disponibles, retirables vers Mobile Money.
   final Wallet wallet = Wallet();
   String rejectionReason;
@@ -214,7 +226,7 @@ class Pro {
   DateTime? premiumUntil;
 
   /// Soignant qui a parrainé celui-ci.
-  final Pro? referredBy;
+  Pro? referredBy;
 
   /// Le parrainage n'est récompensé qu'à la première validation.
   bool referralRewarded = false;
@@ -223,8 +235,14 @@ class Pro {
   final List<DateTime> cancellations = [];
 
   /// Code à donner aux collègues : un mois Premium offert par filleul vérifié.
-  String get referralCode =>
-      '${name.replaceFirst('Dr ', '').split(' ').first.toUpperCase()}-${id.replaceAll(RegExp(r'[^0-9]'), '')}';
+  String get referralCode {
+    final first = name.replaceFirst('Dr ', '').split(' ').first.toUpperCase();
+    // Démo : « pro1 » → AYA-1 ; base en ligne : 6 premiers caractères de l'id.
+    final suffix = id.startsWith('pro')
+        ? id.replaceAll(RegExp(r'[^0-9]'), '')
+        : id.replaceAll('-', '').substring(0, 6).toUpperCase();
+    return '$first-$suffix';
+  }
 
   bool get verified => status == VerificationStatus.verified;
   bool isPremium(DateTime now) =>

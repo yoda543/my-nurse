@@ -133,7 +133,9 @@ class BookingDetailScreen extends StatelessWidget {
                     ],
                   ),
                 );
-                if (ok == true) app.cancel(b);
+                if (ok == true && context.mounted) {
+                  await runAction(context, () => app.cancel(b));
+                }
               },
               child: Text(
                 b.contract == null ? 'Annuler le soin' : 'Annuler le suivi',
@@ -258,9 +260,11 @@ class _RatingFormState extends State<_RatingForm> {
             FilledButton(
               onPressed: _stars == 0
                   ? null
-                  : () =>
-                        AppScope.of(context)
-                            .rate(widget.booking, _stars, _review.text.trim()),
+                  : () => runAction(
+                      context,
+                      () => AppScope.of(context)
+                          .rate(widget.booking, _stars, _review.text.trim()),
+                    ),
               child: const Text('Envoyer ma note'),
             ),
           ],

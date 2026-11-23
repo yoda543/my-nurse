@@ -316,8 +316,15 @@ class _TopUpScreenState extends State<TopUpScreen> {
     final app = AppScope.of(context);
     final messenger = ScaffoldMessenger.of(context);
     final nav = Navigator.of(context);
-    await Future<void>.delayed(const Duration(milliseconds: 1200));
-    app.topUp(v, _method);
+    if (!app.isRemote) {
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+    }
+    if (!mounted) return;
+    final ok = await runAction(context, () => app.topUp(v, _method));
+    if (!ok) {
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
     messenger.showSnackBar(
       SnackBar(
         content: Text(
@@ -519,11 +526,25 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     setState(() => _busy = true);
     final messenger = ScaffoldMessenger.of(context);
     final nav = Navigator.of(context);
-    await Future<void>.delayed(const Duration(milliseconds: 1200));
-    app.withdraw(app.currentPro!, v, _method);
+    if (!app.isRemote) {
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+    }
+    if (!mounted) return;
+    final ok = await runAction(
+      context,
+      () => app.withdraw(app.currentPro!, v, _method, phone: _phone.text),
+    );
+    if (!ok) {
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
     messenger.showSnackBar(
       SnackBar(
-        content: Text('${fcfa(v)} envoyés sur votre compte ${_method.label}.'),
+        content: Text(
+          app.isRemote
+              ? 'Retrait de ${fcfa(v)} demandé vers votre compte ${_method.label}.'
+              : '${fcfa(v)} envoyés sur votre compte ${_method.label}.',
+        ),
       ),
     );
     nav.pop();
