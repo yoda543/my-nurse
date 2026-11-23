@@ -102,11 +102,18 @@ flutter test
 
 ## Base de données
 
+Projet Supabase : `my-nurse` (région Francfort). Les migrations `0001` à `0005` y sont
+appliquées ; la vérification des délais tourne chaque minute (`pg_cron`). Un essai de bout
+en bout (inscription, validation, réservation, recharge, paiement, compte rendu) a été joué
+sur le projet puis annulé : la base est vide et prête.
+
+
 - `supabase/migrations/0001_init.sql` : tables, règles d'accès, actions contrôlées.
 - `supabase/migrations/0002_storage.sql` : stockage privé des pièces justificatives.
 - `supabase/migrations/0003_wallets.sql` : soldes, historique des mouvements, retraits.
 - `supabase/migrations/0004_business_rules.sql` : délais, créneaux, annulation, suivis,
-  Premium, parrainage, reçus ; expiration automatique chaque minute si `pg_cron` est activé.
+  Premium, parrainage, reçus.
+- `supabase/migrations/0005_cron.sql` : expiration automatique des demandes chaque minute.
 
 Le prix, le statut d'un soin, le paiement et la vérification des soignants sont fixés côté
 serveur, jamais par l'app. Le paiement n'est confirmé que par `confirm_payment`, appelable

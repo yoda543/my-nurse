@@ -1,7 +1,7 @@
 -- Règles métier : délais, créneaux, annulation, suivis réguliers,
 -- Pro Premium, parrainage, reçus. Mêmes valeurs que lib/rules.dart.
 
-create extension if not exists btree_gist;
+create extension if not exists btree_gist with schema extensions;
 
 alter type public.wallet_tx_kind add value if not exists 'subscription';
 
