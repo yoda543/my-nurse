@@ -68,19 +68,24 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
       setState(() => _error = "Vérifiez les heures d'arrivée et de départ.");
       return;
     }
-    AppScope.of(context).submitCareLog(
-      widget.booking,
-      CareLog(
-        arrivedAt: arrived,
-        leftAt: left,
-        acts: _acts.text.trim(),
-        bloodPressure: _bp.text.trim(),
-        temperature: _temp.text.trim(),
-        pulse: _pulse.text.trim(),
-        glycemia: _gly.text.trim(),
-        observations: _obs.text.trim(),
-      ),
-    );
+    try {
+      AppScope.of(context).submitCareLog(
+        widget.booking,
+        CareLog(
+          arrivedAt: arrived,
+          leftAt: left,
+          acts: _acts.text.trim(),
+          bloodPressure: _bp.text.trim(),
+          temperature: _temp.text.trim(),
+          pulse: _pulse.text.trim(),
+          glycemia: _gly.text.trim(),
+          observations: _obs.text.trim(),
+        ),
+      );
+    } on BusinessRuleError catch (e) {
+      setState(() => _error = e.message);
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Compte rendu enregistré et envoyé au patient.'),

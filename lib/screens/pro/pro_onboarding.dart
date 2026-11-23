@@ -21,6 +21,7 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
   final _years = TextEditingController();
   final _order = TextEditingController();
   final _bio = TextEditingController();
+  final _referral = TextEditingController();
   ProType _type = ProType.infirmier;
   final Set<String> _communes = {};
   final Map<String, TextEditingController> _prices = {};
@@ -32,7 +33,14 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
 
   @override
   void dispose() {
-    for (final c in [_name, _years, _order, _bio, ..._prices.values]) {
+    for (final c in [
+      _name,
+      _years,
+      _order,
+      _bio,
+      _referral,
+      ..._prices.values,
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -66,6 +74,14 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
       setState(() => _error = problem);
       return;
     }
+    if (_referral.text.trim().isNotEmpty &&
+        app.findReferrer(_referral.text) == null) {
+      setState(
+        () => _error =
+            'Code de parrainage inconnu. Vérifiez-le ou laissez le champ vide.',
+      );
+      return;
+    }
     app.registerPro(
       name: _name.text.trim(),
       phone: app.sessionPhone,
@@ -77,6 +93,7 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
       orderNumber: _order.text.trim(),
       nightAvailable: _night,
       documents: requiredDocs(_type).toSet(),
+      referralCode: _referral.text,
     );
   }
 
@@ -251,6 +268,15 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
               const Text(
                 'Mode démo : aucun fichier n’est envoyé.',
                 style: TextStyle(color: Colors.black54, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _referral,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'Code de parrainage d’un collègue (facultatif)',
+                  hintText: 'AYA-1',
+                ),
               ),
               const SizedBox(height: 12),
               CheckboxListTile(

@@ -96,6 +96,7 @@ class WalletHistory extends StatelessWidget {
                   WalletTxKind.refund => Icons.undo,
                   WalletTxKind.earning => Icons.healing_outlined,
                   WalletTxKind.withdrawal => Icons.call_made,
+                  WalletTxKind.subscription => Icons.workspace_premium_outlined,
                 },
                 color: t.amount > 0 ? brandGreen : brandInk,
                 size: 20,

@@ -3,13 +3,27 @@ import 'package:material_ui/material_ui.dart';
 import 'data/demo_data.dart';
 import 'models.dart';
 
+/// Refus d'une action pour une raison métier, avec un message à afficher.
+class BusinessRuleError implements Exception {
+  const BusinessRuleError(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// État de l'application en mode démo (en mémoire).
 /// Chaque méthode correspond à une écriture contrôlée côté serveur
 /// (voir supabase/migrations) : mêmes règles, mêmes refus.
 class AppState extends ChangeNotifier {
-  AppState({bool seed = true}) {
+  AppState({bool seed = true, DateTime Function()? clock})
+    : _clock = clock ?? DateTime.now {
     if (seed) _seed();
   }
+
+  final DateTime Function() _clock;
+  DateTime get now => _clock();
 
   /// Numéro du soignant de démonstration déjà inscrit.
   static const demoProPhone = '0500000000';
@@ -22,16 +36,15 @@ class AppState extends ChangeNotifier {
   String patientName = 'Awa Bamba';
   String commune = communes.first;
   int _nextId = 1;
+  int _nextContract = 1;
+  int _nextReceipt = 1;
+
+  /// Chiffre d'affaires des abonnements Pro Premium.
+  int premiumRevenue = 0;
 
   /// Le titulaire du compte et les proches qu'il gère.
   late final List<Patient> patients = [
-    Patient(
-      id: 'P0',
-      name: patientName,
-      birthYear: 1988,
-      allergies: '',
-      history: '',
-    ),
+    Patient(id: 'P0', name: patientName, birthYear: 1988),
   ];
 
   /// Porte-monnaie du compte patient connecté.
@@ -49,6 +62,7 @@ class AppState extends ChangeNotifier {
   void login(UserRole r, {String phone = ''}) {
     role = r;
     sessionPhone = phone;
+    expireStale();
     notifyListeners();
   }
 
@@ -59,6 +73,7 @@ class AppState extends ChangeNotifier {
         ? pros.first
         : pros.where((p) => p.phone == phone).firstOrNull;
     role = UserRole.pro;
+    expireStale();
     notifyListeners();
   }
 
@@ -75,6 +90,13 @@ class AppState extends ChangeNotifier {
   }
 
   // --------------------------------------------------------- inscription pro
+  /// Retrouve un parrain vérifié à partir de son code.
+  Pro? findReferrer(String code) {
+    final c = code.trim().toUpperCase();
+    if (c.isEmpty) return null;
+    return pros.where((p) => p.verified && p.referralCode == c).firstOrNull;
+  }
+
   Pro registerPro({
     required String name,
     required String phone,
@@ -86,6 +108,7 @@ class AppState extends ChangeNotifier {
     required String orderNumber,
     required bool nightAvailable,
     required Set<DocType> documents,
+    String referralCode = '',
   }) {
     for (final e in prices.entries) {
       final s = services.firstWhere((s) => s.id == e.key);
@@ -95,6 +118,10 @@ class AppState extends ChangeNotifier {
       if (e.value < s.minPrice || e.value > s.maxPrice) {
         throw ArgumentError('Prix hors de la fourchette pour ${s.name}.');
       }
+    }
+    final referrer = findReferrer(referralCode);
+    if (referralCode.trim().isNotEmpty && referrer == null) {
+      throw const BusinessRuleError('Code de parrainage inconnu.');
     }
     final p = Pro(
       id: 'pro${pros.length + 1}',
@@ -109,6 +136,7 @@ class AppState extends ChangeNotifier {
       nightAvailable: nightAvailable,
       documents: documents,
       status: VerificationStatus.pending,
+      referredBy: referrer,
     );
     pros.add(p);
     currentPro = p;
@@ -138,6 +166,27 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ------------------------------------------------------------- Premium
+  /// Abonnement Pro Premium, payé avec le solde du soignant.
+  void subscribePremium(Pro p) {
+    if (!p.verified) {
+      throw const BusinessRuleError('Réservé aux soignants vérifiés.');
+    }
+    if (!p.wallet.move(
+      WalletTxKind.subscription,
+      -premiumPrice,
+      'Abonnement Pro Premium (30 jours)',
+      at: now,
+    )) {
+      throw const BusinessRuleError(
+        'Solde insuffisant : il faut $premiumPrice FCFA sur votre solde.',
+      );
+    }
+    p.premiumUntil = extendPremium(p.premiumUntil, now, premiumPeriod);
+    premiumRevenue += premiumPrice;
+    notifyListeners();
+  }
+
   // ------------------------------------------------------------ administration
   List<Pro> prosWithStatus(VerificationStatus s) =>
       pros.where((p) => p.status == s).toList();
@@ -152,6 +201,16 @@ class AppState extends ChangeNotifier {
     }
     p.status = VerificationStatus.verified;
     p.rejectionReason = '';
+    // Parrainage : un mois Premium offert au parrain, une seule fois.
+    final referrer = p.referredBy;
+    if (referrer != null && !p.referralRewarded) {
+      p.referralRewarded = true;
+      referrer.premiumUntil = extendPremium(
+        referrer.premiumUntil,
+        now,
+        referralBonus,
+      );
+    }
     notifyListeners();
   }
 
@@ -162,17 +221,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Suspend un pro : ses soins à venir sont annulés et remboursés.
+  /// Suspend un pro : ses soins à venir sont annulés et remboursés en totalité.
   void suspendPro(Pro p, String reason) {
     if (p.status != VerificationStatus.verified) return;
     p.status = VerificationStatus.suspended;
     p.rejectionReason = reason;
-    for (final b in bookings.where(
-      (b) =>
-          b.pro == p &&
-          (b.status == BookingStatus.pending ||
-              b.status == BookingStatus.accepted),
-    )) {
+    for (final b in bookings.where((b) => b.pro == p && _isOpen(b))) {
       _cancel(b, 'Soignant suspendu par MyNurse');
     }
     notifyListeners();
@@ -215,7 +269,8 @@ class AppState extends ChangeNotifier {
         ..sort((a, b) => b.scheduledAt.compareTo(a.scheduledAt));
 
   // ------------------------------------------------------------ recherche
-  /// Pros vérifiés proposant ce service dans la commune, meilleurs d'abord.
+  /// Pros vérifiés proposant ce service dans la commune : les Pro Premium
+  /// d'abord, puis les mieux notés.
   List<Pro> prosFor(CareService s, String commune) {
     final list = pros
         .where(
@@ -225,11 +280,110 @@ class AppState extends ChangeNotifier {
               p.communes.contains(commune),
         )
         .toList();
-    list.sort((a, b) => b.rating.compareTo(a.rating));
+    list.sort((a, b) {
+      final byPremium = (b.isPremium(now) ? 1 : 0) - (a.isPremium(now) ? 1 : 0);
+      return byPremium != 0 ? byPremium : b.rating.compareTo(a.rating);
+    });
     return list;
   }
 
+  /// Soin confirmé du soignant qui chevauche ce créneau, s'il y en a un.
+  Booking? conflictFor(
+    Pro pro,
+    DateTime start,
+    DateTime end, {
+    Booking? except,
+  }) => bookings
+      .where(
+        (b) =>
+            b != except &&
+            b.pro == pro &&
+            b.status == BookingStatus.accepted &&
+            overlaps(start, end, b.scheduledAt, b.endsAt),
+      )
+      .firstOrNull;
+
   // --------------------------------------------------------- réservations
+  /// Contrôles communs à toute nouvelle réservation.
+  void _checkSlot(
+    CareService service,
+    Pro pro,
+    DateTime at,
+    bool prescription,
+  ) {
+    if (!pro.verified || !pro.prices.containsKey(service.id)) {
+      throw const BusinessRuleError(
+        "Ce soignant n'est pas disponible pour ce soin.",
+      );
+    }
+    if (at.isBefore(now.add(minNotice))) {
+      throw BusinessRuleError(
+        'Réservez au moins ${minNotice.inHours} h à l’avance, le temps que '
+        'le soignant se déplace.',
+      );
+    }
+    if (at.isAfter(now.add(maxAdvance))) {
+      throw BusinessRuleError(
+        'On ne réserve pas plus de ${maxAdvance.inDays} jours à l’avance.',
+      );
+    }
+    if (isNight(at) && !pro.nightAvailable) {
+      throw BusinessRuleError(
+        '${pro.name} ne fait pas de soins de nuit (21 h – 6 h).',
+      );
+    }
+    if (service.needsPrescription && !prescription) {
+      throw const BusinessRuleError(
+        'Ce soin se fait uniquement sur ordonnance.',
+      );
+    }
+    final end = at.add(Duration(minutes: service.durationMinutes));
+    if (conflictFor(pro, at, end) != null) {
+      throw BusinessRuleError(
+        '${pro.name} a déjà un soin à cette heure. Choisissez un autre '
+        'créneau.',
+      );
+    }
+  }
+
+  Booking _create({
+    required CareService service,
+    required Pro pro,
+    required String commune,
+    required String address,
+    required DateTime scheduledAt,
+    required bool hasPrescription,
+    required Patient patient,
+    required bool mine,
+    String note = '',
+    DateTime? createdAt,
+    Contract? contract,
+    int sessionIndex = 0,
+  }) {
+    final b = Booking(
+      id: 'R${_nextId++}',
+      patient: patient,
+      mine: mine,
+      service: service,
+      pro: pro,
+      commune: commune,
+      address: address,
+      scheduledAt: scheduledAt,
+      basePrice: pro.prices[service.id]!,
+      hasPrescription: hasPrescription,
+      note: note,
+      createdAt: createdAt ?? now,
+      contract: contract,
+      sessionIndex: sessionIndex,
+      commissionRate: contract == null
+          ? commissionRate
+          : contractCommissionRate,
+    );
+    bookings.insert(0, b);
+    contract?.sessions.add(b);
+    return b;
+  }
+
   Booking book({
     required CareService service,
     required Pro pro,
@@ -241,50 +395,140 @@ class AppState extends ChangeNotifier {
     Patient? patient,
     bool mine = true,
   }) {
-    if (!pro.verified || !pro.prices.containsKey(service.id)) {
-      throw StateError("Ce soignant n'est pas disponible pour ce soin.");
-    }
-    final b = Booking(
-      id: 'R${_nextId++}',
-      patient: patient ?? patients.first,
-      mine: mine,
+    _checkSlot(service, pro, scheduledAt, hasPrescription);
+    final b = _create(
       service: service,
       pro: pro,
       commune: commune,
       address: address,
       scheduledAt: scheduledAt,
-      basePrice: pro.prices[service.id]!,
       hasPrescription: hasPrescription,
+      patient: patient ?? patients.first,
+      mine: mine,
       note: note,
     );
-    bookings.insert(0, b);
     notifyListeners();
     return b;
   }
 
+  /// Suivi régulier : plusieurs séances à la même heure, commission réduite.
+  Contract bookContract({
+    required CareService service,
+    required Pro pro,
+    required String commune,
+    required String address,
+    required DateTime firstAt,
+    required Frequency frequency,
+    required int sessions,
+    required bool hasPrescription,
+    String note = '',
+    Patient? patient,
+  }) {
+    if (sessions < contractMinSessions || sessions > contractMaxSessions) {
+      throw const BusinessRuleError(
+        'Un suivi compte de $contractMinSessions à $contractMaxSessions '
+        'séances.',
+      );
+    }
+    final dates = sessionDates(firstAt, frequency, sessions);
+    for (final d in dates) {
+      _checkSlot(service, pro, d, hasPrescription);
+    }
+    final c = Contract(id: 'C${_nextContract++}', frequency: frequency);
+    for (var i = 0; i < dates.length; i++) {
+      _create(
+        service: service,
+        pro: pro,
+        commune: commune,
+        address: address,
+        scheduledAt: dates[i],
+        hasPrescription: hasPrescription,
+        patient: patient ?? patients.first,
+        mine: true,
+        note: note,
+        contract: c,
+        sessionIndex: i,
+      );
+    }
+    notifyListeners();
+    return c;
+  }
+
+  /// Réponse du soignant. Pour un suivi, la réponse vaut pour toutes les
+  /// séances.
   void respond(Booking b, {required bool accept}) {
-    if (b.status != BookingStatus.pending) return;
-    b.status = accept ? BookingStatus.accepted : BookingStatus.refused;
+    expireStale();
+    final group =
+        b.contract?.sessions
+            .where((s) => s.status == BookingStatus.pending)
+            .toList() ??
+        [b];
+    if (group.isEmpty || group.any((s) => s.status != BookingStatus.pending)) {
+      throw const BusinessRuleError('Cette demande a expiré ou a été traitée.');
+    }
+    if (accept) {
+      for (final s in group) {
+        if (conflictFor(s.pro, s.scheduledAt, s.endsAt, except: s) != null) {
+          throw BusinessRuleError(
+            'Vous avez déjà un soin le ${_shortDate(s.scheduledAt)}. '
+            'Refusez cette demande ou libérez ce créneau.',
+          );
+        }
+      }
+    }
+    for (final s in group) {
+      s.status = accept ? BookingStatus.accepted : BookingStatus.refused;
+      if (accept) s.acceptedAt = now;
+    }
     notifyListeners();
   }
 
-  /// Paiement Mobile Money. En production : agrégateur (CinetPay ou PayDunya),
-  /// confirmé par son webhook, jamais par l'app.
-  /// Renvoie false si le solde ne suffit pas.
+  /// Montant à payer pour ce soin (tout le suivi s'il en fait partie).
+  int amountDue(Booking b) => b.contract?.amountDue ?? b.price;
+
+  /// Paiement avec le solde ou en Mobile Money. En production, un paiement
+  /// Mobile Money est confirmé par le webhook de l'agrégateur, jamais par
+  /// l'app. Renvoie false si le solde ne suffit pas.
   bool pay(Booking b, PaymentMethod method) {
+    expireStale();
     if (!b.awaitingPayment) return false;
+    final group = b.contract?.awaitingPayment.toList() ?? [b];
+    final total = group.fold(0, (s, x) => s + x.price);
     if (method == PaymentMethod.wallet &&
         !wallet.move(
           WalletTxKind.payment,
-          -b.price,
-          '${b.service.name} · ${b.pro.name}',
+          -total,
+          b.contract == null
+              ? '${b.service.name} · ${b.pro.name}'
+              : 'Suivi ${b.service.name} (${group.length} séances)',
+          at: now,
         )) {
       return false;
     }
-    b.paymentMethod = method;
-    b.paidAt = DateTime.now();
+    for (final s in group) {
+      s.paymentMethod = method;
+      s.paidAt = now;
+    }
     notifyListeners();
     return true;
+  }
+
+  /// Annule les demandes restées sans réponse et les rendez-vous non payés
+  /// à temps. Renvoie le nombre de séances annulées.
+  int expireStale() {
+    var count = 0;
+    for (final b in bookings) {
+      if (b.status == BookingStatus.pending &&
+          !now.isBefore(b.responseDeadline)) {
+        _cancel(b, 'Sans réponse du soignant à temps');
+        count++;
+      } else if (b.awaitingPayment && !now.isBefore(b.paymentDeadline!)) {
+        _cancel(b, 'Non payé à temps');
+        count++;
+      }
+    }
+    if (count > 0) notifyListeners();
+    return count;
   }
 
   // ---------------------------------------------------------- porte-monnaie
@@ -297,7 +541,12 @@ class AppState extends ChangeNotifier {
     if (amount < minTopUp || amount > maxTopUp) {
       throw ArgumentError('Montant hors limites.');
     }
-    wallet.move(WalletTxKind.topUp, amount, 'Recharge ${method.label}');
+    wallet.move(
+      WalletTxKind.topUp,
+      amount,
+      'Recharge ${method.label}',
+      at: now,
+    );
     notifyListeners();
   }
 
@@ -313,6 +562,7 @@ class AppState extends ChangeNotifier {
       WalletTxKind.withdrawal,
       -amount,
       'Retrait ${method.label}',
+      at: now,
     )) {
       throw ArgumentError('Solde insuffisant.');
     }
@@ -324,40 +574,119 @@ class AppState extends ChangeNotifier {
       .where((b) => b.pro == p && b.readyForCare)
       .fold(0, (s, b) => s + b.proEarnings);
 
-  void cancel(Booking b, {String reason = 'Annulé par le patient'}) {
-    if (b.status != BookingStatus.pending &&
-        b.status != BookingStatus.accepted) {
-      return;
+  // ------------------------------------------------------------ annulation
+  bool _isOpen(Booking b) =>
+      b.status == BookingStatus.pending || b.status == BookingStatus.accepted;
+
+  /// Séances concernées par une annulation (tout ce qui reste d'un suivi).
+  List<Booking> _cancellable(Booking b) =>
+      (b.contract?.sessions ?? [b]).where(_isOpen).toList();
+
+  /// Ce que le patient récupère et ce qui revient au soignant s'il annule
+  /// maintenant.
+  ({int refund, int fee, int sessions}) cancellationQuote(Booking b) {
+    var refund = 0, fee = 0;
+    final group = _cancellable(b);
+    for (final s in group) {
+      if (!s.paid) continue;
+      final f = lateCancellationFee(
+        price: s.price,
+        scheduledAt: s.scheduledAt,
+        now: now,
+      );
+      fee += f;
+      refund += s.price - f;
     }
-    _cancel(b, reason);
+    return (refund: refund, fee: fee, sessions: group.length);
+  }
+
+  /// Annulation par le patient : gratuite jusqu'à 2 h avant le soin, sinon la
+  /// moitié du prix est versée au soignant.
+  void cancel(Booking b, {String reason = 'Annulé par le patient'}) {
+    for (final s in _cancellable(b)) {
+      final fee = s.paid
+          ? lateCancellationFee(
+              price: s.price,
+              scheduledAt: s.scheduledAt,
+              now: now,
+            )
+          : 0;
+      _cancel(
+        s,
+        fee > 0 ? '$reason moins de 2 h avant le soin' : reason,
+        fee: fee,
+      );
+    }
     notifyListeners();
   }
 
-  /// Les remboursements reviennent sur le solde MyNurse du patient.
-  void _cancel(Booking b, String reason) {
+  /// Annulation par le soignant d'un soin confirmé : le patient est remboursé
+  /// en totalité et l'annulation compte pour la fiabilité du soignant.
+  void cancelByPro(Booking b, String reason) {
+    if (b.status != BookingStatus.accepted) {
+      throw const BusinessRuleError('Seul un soin confirmé peut être annulé.');
+    }
+    if (reason.trim().isEmpty) {
+      throw const BusinessRuleError('Indiquez le motif au patient.');
+    }
+    for (final s in _cancellable(b)) {
+      _cancel(s, 'Annulé par le soignant : $reason');
+    }
+    b.pro.cancellations.add(now);
+    notifyListeners();
+  }
+
+  /// Les remboursements reviennent sur le solde MyNurse du patient ; une
+  /// pénalité d'annulation tardive revient au soignant, commission déduite.
+  void _cancel(Booking b, String reason, {int fee = 0}) {
     b.status = BookingStatus.cancelled;
     b.cancelReason = reason;
-    if (b.paid) {
-      b.refunded = true;
-      if (b.mine) {
-        wallet.move(
-          WalletTxKind.refund,
-          b.price,
-          'Remboursement · ${b.service.name}',
-        );
-      }
+    if (!b.paid) return;
+    b.refunded = true;
+    b.cancellationFee = fee;
+    if (b.mine && b.price - fee > 0) {
+      wallet.move(
+        WalletTxKind.refund,
+        b.price - fee,
+        'Remboursement · ${b.service.name}',
+        at: now,
+      );
+    }
+    if (fee > 0) {
+      b.pro.wallet.move(
+        WalletTxKind.earning,
+        fee - (fee * b.commissionRate).round(),
+        'Annulation tardive · ${b.patientName}',
+        at: now,
+      );
     }
   }
 
+  // ------------------------------------------------------------- fin de soin
+  /// Peut-on rédiger le compte rendu maintenant ?
+  bool canLogCare(Booking b) =>
+      b.readyForCare && !now.isBefore(b.careLogOpensAt);
+
   void submitCareLog(Booking b, CareLog log) {
-    if (!b.readyForCare) return;
+    if (!b.readyForCare) {
+      throw const BusinessRuleError('Ce soin n’est pas confirmé et payé.');
+    }
+    if (now.isBefore(b.careLogOpensAt)) {
+      throw BusinessRuleError(
+        'Le compte rendu s’écrit à partir de '
+        '${_time(b.careLogOpensAt)}, le jour du soin.',
+      );
+    }
     b.careLog = log;
     b.status = BookingStatus.done;
+    b.receiptNumber =
+        'MN-${now.year}-${(_nextReceipt++).toString().padLeft(5, '0')}';
     b.pro.careCount++;
     b.pro.wallet.move(
       WalletTxKind.earning,
       b.proEarnings,
       '${b.service.name} · ${b.patientName}',
+      at: now,
     );
     notifyListeners();
   }
@@ -373,32 +702,78 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<Booking> get patientBookings => bookings.where((b) => b.mine).toList();
+  /// Soins du patient : à venir d'abord (du plus proche au plus lointain),
+  /// puis l'historique (du plus récent au plus ancien).
+  List<Booking> get patientBookings {
+    final open = bookings.where((b) => b.mine && _isOpen(b)).toList()
+      ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
+    final past = bookings.where((b) => b.mine && !_isOpen(b)).toList()
+      ..sort((a, b) => b.scheduledAt.compareTo(a.scheduledAt));
+    return [...open, ...past];
+  }
 
   List<Booking> proBookings(BookingStatus status) =>
       bookings.where((b) => b.pro == currentPro && b.status == status).toList();
 
+  /// Demandes à traiter : une carte par soin ponctuel ou par suivi.
+  List<Booking> get proRequests =>
+      proBookings(BookingStatus.pending)
+          .where((b) => b.contract == null || b == _firstPending(b.contract!))
+          .toList();
+
+  Booking? _firstPending(Contract c) =>
+      c.sessions.where((s) => s.status == BookingStatus.pending).firstOrNull;
+
   // ------------------------------------------------------------- chiffres
+  /// Statistiques d'un soignant sur les 30 derniers jours.
+  ({int cares, int earnings, int acceptance}) proStats(Pro p) {
+    final since = now.subtract(const Duration(days: 30));
+    final mine = bookings.where(
+      (b) => b.pro == p && b.createdAt.isAfter(since),
+    );
+    final done = mine.where((b) => b.status == BookingStatus.done);
+    final answered = mine.where(
+      (b) => b.acceptedAt != null || b.status == BookingStatus.refused,
+    );
+    final accepted = answered.where((b) => b.acceptedAt != null).length;
+    return (
+      cares: done.length,
+      earnings: done.fold(0, (s, b) => s + b.proEarnings),
+      acceptance: answered.isEmpty
+          ? 100
+          : (accepted * 100 / answered.length).round(),
+    );
+  }
+
   /// Soins terminés : l'argent a été reversé au pro, commission encaissée.
   Iterable<Booking> get doneBookings =>
       bookings.where((b) => b.status == BookingStatus.done);
   int get grossVolume => doneBookings.fold(0, (s, b) => s + b.price);
-  int get commissionTotal => doneBookings.fold(0, (s, b) => s + b.commission);
+  int get commissionTotal =>
+      doneBookings.fold(0, (s, b) => s + b.commission) +
+      bookings.fold(
+        0,
+        (s, b) => s + (b.cancellationFee * b.commissionRate).round(),
+      );
 
   /// Argent payé, bloqué en attendant la fin du soin.
   int get escrowTotal =>
       bookings.where((b) => b.readyForCare).fold(0, (s, b) => s + b.price);
-  int get refundTotal =>
-      bookings.where((b) => b.refunded).fold(0, (s, b) => s + b.price);
+  int get refundTotal => bookings.fold(0, (s, b) => s + b.refundAmount);
 
   /// Argent des clients et des soignants conservé par MyNurse.
   int get clientBalances => wallet.balance;
   int get proBalances => pros.fold(0, (s, p) => s + p.wallet.balance);
 
+  static String _two(int n) => n.toString().padLeft(2, '0');
+  static String _time(DateTime d) => '${_two(d.hour)}h${_two(d.minute)}';
+  static String _shortDate(DateTime d) =>
+      '${_two(d.day)}/${_two(d.month)} à ${_time(d)}';
+
   void _seed() {
-    final now = DateTime.now();
+    final start = now;
     DateTime at(int days, int hour) =>
-        DateTime(now.year, now.month, now.day + days, hour);
+        DateTime(start.year, start.month, start.day + days, hour);
     final aya = pros.first;
     CareService s(String id) => services.firstWhere((e) => e.id == id);
     final jean = Patient(id: 'X1', name: 'Jean Kouassi', birthYear: 1961);
@@ -409,9 +784,15 @@ class AppState extends ChangeNotifier {
       allergies: 'Pénicilline',
       history: 'Diabète de type 2',
     );
+    final marie = Patient(
+      id: 'X3',
+      name: 'Marie Kouadio',
+      birthYear: 1949,
+      history: 'Opérée de la hanche',
+    );
 
-    // Une demande en attente et un soin confirmé et payé pour l'espace soignant.
-    book(
+    // Une demande ponctuelle, reçue il y a 20 minutes.
+    _create(
       service: s('pansement'),
       pro: aya,
       commune: 'Riviera',
@@ -421,29 +802,67 @@ class AppState extends ChangeNotifier {
       note: 'Pansement après opération du genou.',
       patient: jean,
       mine: false,
+      createdAt: start.subtract(const Duration(minutes: 20)),
     );
-    final confirmed = book(
+
+    // Une demande de suivi : pansement un jour sur deux, 6 séances.
+    final contract = Contract(
+      id: 'C${_nextContract++}',
+      frequency: Frequency.everyOtherDay,
+    );
+    final dates = sessionDates(at(2, 16), Frequency.everyOtherDay, 6);
+    for (var i = 0; i < dates.length; i++) {
+      _create(
+        service: s('pansement'),
+        pro: aya,
+        commune: 'Cocody',
+        address: 'Cocody Ambassades, rue du Lycée technique',
+        scheduledAt: dates[i],
+        hasPrescription: false,
+        note: 'Ulcère de jambe, pansement complexe.',
+        patient: marie,
+        mine: false,
+        createdAt: start.subtract(const Duration(minutes: 45)),
+        contract: contract,
+        sessionIndex: i,
+      );
+    }
+
+    // Un soin confirmé et payé, qui commence maintenant.
+    final soon = DateTime(
+      start.year,
+      start.month,
+      start.day,
+      start.hour,
+      start.minute - start.minute % 15,
+    );
+    final confirmed = _create(
       service: s('injection'),
       pro: aya,
       commune: 'Cocody',
       address: 'Cocody Angré, 8e tranche, immeuble Sika, 2e étage',
-      scheduledAt: at(0, 17),
+      scheduledAt: soon,
       hasPrescription: true,
       patient: adjoua,
       mine: false,
+      createdAt: start.subtract(const Duration(days: 1)),
     );
     confirmed.status = BookingStatus.accepted;
+    confirmed.acceptedAt = start.subtract(const Duration(hours: 23));
     confirmed.paymentMethod = PaymentMethod.wave;
-    confirmed.paidAt = at(-1, 12);
+    confirmed.paidAt = start.subtract(const Duration(hours: 22));
 
     // Un soin terminé dans l'historique du patient.
-    final past = book(
+    final past = _create(
       service: s('pansement'),
       pro: aya,
       commune: 'Cocody',
       address: 'Cocody Danga, rue des Jardins',
       scheduledAt: at(-3, 10),
       hasPrescription: false,
+      patient: patients.first,
+      mine: true,
+      createdAt: at(-4, 17),
     );
     wallet.move(
       WalletTxKind.topUp,
@@ -458,8 +877,11 @@ class AppState extends ChangeNotifier {
       at: at(-4, 18),
     );
     past.status = BookingStatus.done;
+    past.acceptedAt = at(-4, 17);
     past.paymentMethod = PaymentMethod.wallet;
     past.paidAt = at(-4, 18);
+    past.receiptNumber =
+        'MN-${start.year}-${(_nextReceipt++).toString().padLeft(5, '0')}';
     aya.wallet.move(
       WalletTxKind.earning,
       5100,
@@ -494,7 +916,12 @@ class AppState extends ChangeNotifier {
       observations: 'Plaie propre, cicatrisation normale. Prochain pansement dans 2 jours.',
     );
 
-    // Un dossier soignant à vérifier pour l'administration.
+    // Un soignant Premium dans la démo.
+    pros.firstWhere((p) => p.name == 'Ibrahim Traoré').premiumUntil = start.add(
+      const Duration(days: 12),
+    );
+
+    // Un dossier soignant à vérifier, parrainé par Aya.
     pros.add(
       Pro(
         id: 'pro${pros.length + 1}',
@@ -507,6 +934,7 @@ class AppState extends ChangeNotifier {
         bio: "Infirmière diplômée d'État, service de médecine interne.",
         orderNumber: 'ONII-CI 2021-0456',
         status: VerificationStatus.pending,
+        referredBy: aya,
         documents: {
           DocType.diplome,
           DocType.autorisation,

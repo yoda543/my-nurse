@@ -66,7 +66,21 @@ class ProsListScreen extends StatelessWidget {
                                 const SizedBox(height: 2),
                                 RatingLine(p),
                                 const SizedBox(height: 6),
-                                const VerifiedBadge(),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: [
+                                    const VerifiedBadge(),
+                                    if (p.isPremium(app.now))
+                                      const Text(
+                                        'Mis en avant',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.black54,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ],
                             ),
                           ),

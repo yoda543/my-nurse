@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -12,7 +14,10 @@ import 'theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('fr_FR');
-  runApp(MyNurseApp(state: AppState()));
+  final state = AppState();
+  // Délais de réponse et de paiement : vérifiés chaque minute.
+  Timer.periodic(const Duration(minutes: 1), (_) => state.expireStale());
+  runApp(MyNurseApp(state: state));
 }
 
 class MyNurseApp extends StatelessWidget {

@@ -27,6 +27,9 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   bool _prescription = false;
   Patient? _patient;
   String? _error;
+  bool _recurring = false;
+  Frequency _frequency = Frequency.daily;
+  int _sessions = 5;
 
   @override
   void initState() {
@@ -48,7 +51,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
       context: context,
       initialDate: _when,
       firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: now.add(const Duration(days: 60)),
+      lastDate: now.add(maxAdvance),
     );
     if (d != null) {
       setState(
@@ -79,35 +82,44 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   void _submit() {
     setState(() => _error = null);
     if (!_formKey.currentState!.validate()) return;
-    if (_when.isBefore(DateTime.now())) {
-      setState(() => _error = 'Choisissez une date et une heure à venir.');
-      return;
-    }
-    if (isNight(_when) && !widget.pro.nightAvailable) {
-      setState(
-        () => _error =
-            '${widget.pro.name} ne fait pas de soins de nuit (21 h – 6 h). '
-            'Choisissez une autre heure ou un autre soignant.',
-      );
-      return;
-    }
-    if (widget.service.needsPrescription && !_prescription) {
-      setState(() => _error = 'Ce soin se fait uniquement sur ordonnance.');
-      return;
-    }
     final app = AppScope.of(context);
-    app.book(
-      service: widget.service,
-      pro: widget.pro,
-      commune: app.commune,
-      address: _address.text.trim(),
-      scheduledAt: _when,
-      hasPrescription: _prescription,
-      note: _note.text.trim(),
-      patient: _patient ?? app.patients.first,
-    );
+    try {
+      if (_recurring) {
+        app.bookContract(
+          service: widget.service,
+          pro: widget.pro,
+          commune: app.commune,
+          address: _address.text.trim(),
+          firstAt: _when,
+          frequency: _frequency,
+          sessions: _sessions,
+          hasPrescription: _prescription,
+          note: _note.text.trim(),
+          patient: _patient ?? app.patients.first,
+        );
+      } else {
+        app.book(
+          service: widget.service,
+          pro: widget.pro,
+          commune: app.commune,
+          address: _address.text.trim(),
+          scheduledAt: _when,
+          hasPrescription: _prescription,
+          note: _note.text.trim(),
+          patient: _patient ?? app.patients.first,
+        );
+      }
+    } on BusinessRuleError catch (e) {
+      setState(() => _error = e.message);
+      return;
+    }
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => _ConfirmationScreen(pro: widget.pro)),
+      MaterialPageRoute(
+        builder: (_) => _ConfirmationScreen(
+          pro: widget.pro,
+          sessions: _recurring ? _sessions : 1,
+        ),
+      ),
       (r) => r.isFirst,
     );
   }
@@ -116,8 +128,11 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final base = widget.pro.prices[widget.service.id]!;
-    final night = isNight(_when);
-    final total = night ? (base * (1 + nightSurchargeRate)).round() : base;
+    final dates = _recurring
+        ? sessionDates(_when, _frequency, _sessions)
+        : [_when];
+    final total = dates.fold(0, (s, d) => s + careFee(base, d));
+    final nightCount = dates.where(isNight).length;
     return Scaffold(
       appBar: AppBar(title: const Text('Réserver')),
       body: Form(
@@ -138,7 +153,27 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                 'avec ${widget.pro.name} · ${app.commune}',
                 style: const TextStyle(color: Colors.black54),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(
+                    value: false,
+                    label: Text('Soin ponctuel'),
+                    icon: Icon(Icons.event_outlined),
+                  ),
+                  ButtonSegment(
+                    value: true,
+                    label: Text('Suivi régulier'),
+                    icon: Icon(Icons.repeat),
+                  ),
+                ],
+                selected: {_recurring},
+                onSelectionChanged: (v) => setState(() {
+                  _recurring = v.first;
+                  _error = null;
+                }),
+              ),
+              const SizedBox(height: 16),
               DropdownButtonFormField<Patient>(
                 key: ValueKey(app.patients.length),
                 initialValue: _patient ?? app.patients.first,
@@ -189,6 +224,61 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                   ),
                 ],
               ),
+              if (_recurring) ...[
+                const SizedBox(height: 16),
+                DropdownButtonFormField<Frequency>(
+                  initialValue: _frequency,
+                  decoration: const InputDecoration(labelText: 'Fréquence'),
+                  items: [
+                    for (final f in Frequency.values)
+                      DropdownMenuItem(value: f, child: Text(f.label)),
+                  ],
+                  onChanged: (f) => setState(() => _frequency = f!),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Nombre de séances',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                    ),
+                    IconButton.outlined(
+                      tooltip: 'Une séance de moins',
+                      onPressed: _sessions > contractMinSessions
+                          ? () => setState(() => _sessions--)
+                          : null,
+                      icon: const Icon(Icons.remove),
+                    ),
+                    SizedBox(
+                      width: 44,
+                      child: Text(
+                        '$_sessions',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton.outlined(
+                      tooltip: 'Une séance de plus',
+                      onPressed: _sessions < contractMaxSessions
+                          ? () => setState(() => _sessions++)
+                          : null,
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Du ${dateTimeLabel(dates.first)} au '
+                  '${dateTimeLabel(dates.last)}. Le même soignant pour toutes '
+                  'les séances.',
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ],
               const SizedBox(height: 16),
               TextFormField(
                 controller: _address,
@@ -232,16 +322,30 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     children: [
-                      _row('Prix du soin', fcfa(base)),
-                      if (night)
-                        _row('Majoration de nuit (50 %)', fcfa(total - base)),
+                      _row(
+                        _recurring
+                            ? '${dates.length} séances × ${fcfa(base)}'
+                            : 'Prix du soin',
+                        fcfa(base * dates.length),
+                      ),
+                      if (nightCount > 0)
+                        _row(
+                          'Majoration de nuit (50 %)',
+                          fcfa(total - base * dates.length),
+                        ),
                       const Divider(height: 20),
                       _row('Total', fcfa(total), bold: true),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Paiement après confirmation du soignant, avec votre solde '
-                        'MyNurse ou en Mobile Money.',
-                        style: TextStyle(color: Colors.black54, fontSize: 13),
+                      Text(
+                        'Paiement après confirmation du soignant, dans les '
+                        '${paymentWindow.inHours} h, avec votre solde MyNurse '
+                        'ou en Mobile Money. Annulation gratuite jusqu’à '
+                        '${freeCancellationWindow.inHours} h avant '
+                        '${_recurring ? 'chaque séance' : 'le soin'}.',
+                        style: const TextStyle(
+                          color: Colors.black54,
+                          fontSize: 13,
+                        ),
                       ),
                     ],
                   ),
@@ -257,7 +361,11 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
               const SizedBox(height: 20),
               FilledButton(
                 onPressed: _submit,
-                child: const Text('Envoyer la demande'),
+                child: Text(
+                  _recurring
+                      ? 'Demander le suivi (${dates.length} séances)'
+                      : 'Envoyer la demande',
+                ),
               ),
             ],
           ),
@@ -284,9 +392,10 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
 }
 
 class _ConfirmationScreen extends StatelessWidget {
-  const _ConfirmationScreen({required this.pro});
+  const _ConfirmationScreen({required this.pro, required this.sessions});
 
   final Pro pro;
+  final int sessions;
 
   @override
   Widget build(BuildContext context) {
@@ -309,8 +418,9 @@ class _ConfirmationScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                '${pro.name} va confirmer votre demande. Vous la retrouvez '
-                'dans « Mes soins ».',
+                '${pro.name} a ${responseWindow.inHours} h pour confirmer '
+                '${sessions > 1 ? 'votre suivi de $sessions séances' : 'votre demande'}. '
+                'Vous la retrouvez dans « Mes soins ».',
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 16, color: Colors.black54),
               ),

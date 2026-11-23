@@ -178,6 +178,7 @@ class BookingCard extends StatelessWidget {
                   'Allergies : ${b.patient.allergies}',
                 ),
               _line(Icons.event_outlined, dateTimeLabel(b.scheduledAt)),
+              if (b.sessionLabel case final label?) _line(Icons.repeat, label),
               _line(Icons.place_outlined, '${b.commune} · ${b.address}'),
               _line(
                 Icons.payments_outlined,

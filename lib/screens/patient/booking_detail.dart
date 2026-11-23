@@ -29,8 +29,9 @@ class BookingDetailScreen extends StatelessWidget {
             InfoBanner(
               icon: Icons.hourglass_top_rounded,
               text:
-                  '${b.pro.name} doit confirmer votre demande. Vous payerez '
-                  'ensuite, avant le soin.',
+                  '${b.pro.name} a jusqu’à ${dateTimeLabel(b.responseDeadline)} '
+                  'pour confirmer. Sans réponse, la demande est annulée et vous '
+                  'pouvez choisir un autre soignant.',
             ),
           ],
           if (b.awaitingPayment) ...[
@@ -38,16 +39,29 @@ class BookingDetailScreen extends StatelessWidget {
             InfoBanner(
               icon: Icons.check_circle_outline,
               text:
-                  '${b.pro.name} a confirmé. Payez pour valider le '
-                  'rendez-vous.',
+                  '${b.pro.name} a confirmé. Payez avant '
+                  '${dateTimeLabel(b.paymentDeadline!)}, sinon le rendez-vous '
+                  'est annulé.',
             ),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => PaymentScreen(booking: b)),
               ),
-              child: Text('Payer ${fcfa(b.price)}'),
+              child: Text(
+                b.contract == null
+                    ? 'Payer ${fcfa(app.amountDue(b))}'
+                    : 'Payer le suivi : ${fcfa(app.amountDue(b))}',
+              ),
             ),
+          ],
+          if (b.contract != null) ...[
+            const SizedBox(height: 16),
+            _ContractSummary(contract: b.contract!),
+          ],
+          if (b.receiptNumber != null) ...[
+            const SizedBox(height: 20),
+            _Receipt(booking: b),
           ],
           if (log != null) ...[
             const SizedBox(height: 20),
@@ -81,13 +95,31 @@ class BookingDetailScreen extends StatelessWidget {
                 foregroundColor: Theme.of(context).colorScheme.error,
               ),
               onPressed: () async {
+                final q = app.cancellationQuote(b);
                 final ok = await showDialog<bool>(
                   context: context,
                   builder: (context) => AlertDialog(
-                    title: const Text('Annuler ce soin ?'),
+                    title: Text(
+                      q.sessions > 1
+                          ? 'Annuler les ${q.sessions} séances restantes ?'
+                          : 'Annuler ce soin ?',
+                    ),
                     content: Text(
-                      '${b.pro.name} sera prévenu(e).'
-                      '${b.paid ? ' Les ${fcfa(b.price)} reviennent tout de suite sur votre solde MyNurse.' : ''}',
+                      [
+                        '${b.pro.name} sera prévenu(e).',
+                        if (q.refund > 0)
+                          '${fcfa(q.refund)} reviennent tout de suite sur '
+                              'votre solde MyNurse.',
+                        if (q.fee > 0)
+                          'Annulation à moins de '
+                              '${freeCancellationWindow.inHours} h du soin : '
+                              '${fcfa(q.fee)} sont versés au soignant, qui '
+                              's’était libéré pour vous.',
+                        if (q.fee == 0 && q.refund > 0)
+                          'Annulation gratuite : plus de '
+                              '${freeCancellationWindow.inHours} h avant le '
+                              'soin.',
+                      ].join(' '),
                     ),
                     actions: [
                       TextButton(
@@ -103,7 +135,9 @@ class BookingDetailScreen extends StatelessWidget {
                 );
                 if (ok == true) app.cancel(b);
               },
-              child: const Text('Annuler le soin'),
+              child: Text(
+                b.contract == null ? 'Annuler le soin' : 'Annuler le suivi',
+              ),
             ),
           ],
         ],
@@ -229,6 +263,95 @@ class _RatingFormState extends State<_RatingForm> {
                             .rate(widget.booking, _stars, _review.text.trim()),
               child: const Text('Envoyer ma note'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ContractSummary extends StatelessWidget {
+  const _ContractSummary({required this.contract});
+
+  final Contract contract;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = contract;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Suivi régulier',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${c.sessions.length} séances, ${c.frequency.label.toLowerCase()}, '
+              'du ${dateTimeLabel(c.start)} au ${dateTimeLabel(c.end)}.',
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${c.doneCount} séance${c.doneCount > 1 ? 's' : ''} réalisée'
+              '${c.doneCount > 1 ? 's' : ''} · total ${fcfa(c.total)}',
+              style: const TextStyle(color: Colors.black54),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Reçu du soin, pour le patient et sa comptabilité.
+class _Receipt extends StatelessWidget {
+  const _Receipt({required this.booking});
+
+  final Booking booking;
+
+  @override
+  Widget build(BuildContext context) {
+    final b = booking;
+    Widget row(String l, String v, {bool bold = false}) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Expanded(child: Text(l)),
+          Text(v, style: TextStyle(fontWeight: bold ? FontWeight.w800 : null)),
+        ],
+      ),
+    );
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.receipt_long_outlined),
+                const SizedBox(width: 8),
+                Text(
+                  'Reçu ${b.receiptNumber}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text('${b.service.name} · ${b.pro.name} (${b.pro.type.label})'),
+            Text('Pour ${b.patientName} · ${dateTimeLabel(b.scheduledAt)}'),
+            const Divider(height: 20),
+            row('Prix du soin', fcfa(b.basePrice)),
+            if (b.night) row('Majoration de nuit', fcfa(b.price - b.basePrice)),
+            row('Total payé', fcfa(b.price), bold: true),
+            if (b.paymentMethod != null)
+              row('Moyen de paiement', b.paymentMethod!.label),
           ],
         ),
       ),

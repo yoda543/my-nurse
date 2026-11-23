@@ -47,17 +47,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
     if (method != PaymentMethod.wallet) {
       await Future<void>.delayed(const Duration(milliseconds: 1200));
     }
+    final due = app.amountDue(widget.booking);
     if (!app.pay(widget.booking, method)) {
       setState(() {
         _busy = false;
-        _error = 'Solde insuffisant. Rechargez votre compte.';
+        _error = widget.booking.awaitingPayment
+            ? 'Solde insuffisant. Rechargez votre compte.'
+            : 'Le délai de paiement est dépassé : ce rendez-vous a été annulé.';
       });
       return;
     }
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          'Paiement de ${fcfa(widget.booking.price)} reçu'
+          'Paiement de ${fcfa(due)} reçu'
           '${method == PaymentMethod.wallet ? '. Solde restant : ${fcfa(app.wallet.balance)}' : ''}.',
         ),
       ),
@@ -70,21 +73,27 @@ class _PaymentScreenState extends State<PaymentScreen> {
     final app = AppScope.of(context);
     final b = widget.booking;
     final balance = app.wallet.balance;
-    final enough = balance >= b.price;
+    final due = app.amountDue(b);
+    final enough = balance >= due;
     final method =
         _choice ?? (enough ? PaymentMethod.wallet : PaymentMethod.wave);
-    final missing = b.price - balance;
+    final missing = due - balance;
     return Scaffold(
       appBar: AppBar(title: const Text('Paiement')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
         children: [
           Text(
-            fcfa(b.price),
+            fcfa(due),
             style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800),
           ),
           Text(
-            '${b.service.name} · ${b.pro.name}\n${dateTimeLabel(b.scheduledAt)}',
+            b.contract == null
+                ? '${b.service.name} · ${b.pro.name}\n${dateTimeLabel(b.scheduledAt)}'
+                : '${b.service.name} · ${b.pro.name}\nSuivi de '
+                      '${b.contract!.awaitingPayment.length} séances, du '
+                      '${dateTimeLabel(b.contract!.awaitingPayment.first.scheduledAt)} '
+                      'au ${dateTimeLabel(b.contract!.awaitingPayment.last.scheduledAt)}',
             style: const TextStyle(color: Colors.black54, height: 1.4),
           ),
           const SizedBox(height: 20),
@@ -172,8 +181,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   )
                 : Text(
                     method == PaymentMethod.wallet
-                        ? 'Payer ${fcfa(b.price)} avec mon solde'
-                        : 'Payer ${fcfa(b.price)}',
+                        ? 'Payer ${fcfa(due)} avec mon solde'
+                        : 'Payer ${fcfa(due)}',
                   ),
           ),
         ],

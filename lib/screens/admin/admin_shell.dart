@@ -242,7 +242,7 @@ class _ProsTab extends StatelessWidget {
         app.pros.where((p) => p.status != VerificationStatus.pending).toList()
           ..sort((a, b) {
             // Alertes de note d'abord, puis par nom.
-            final byAlert = (b.ratingAlert ? 1 : 0) - (a.ratingAlert ? 1 : 0);
+            final byAlert = (_alert(b, app) ? 1 : 0) - (_alert(a, app) ? 1 : 0);
             return byAlert != 0 ? byAlert : a.name.compareTo(b.name);
           });
     return ListView(
@@ -268,9 +268,11 @@ class _ProsTab extends StatelessWidget {
             subtitle: Text(
               '${p.type.label} · ${p.status.label}'
               '${p.ratingCount > 0 ? ' · ${p.rating.toStringAsFixed(1).replaceAll('.', ',')}/5' : ''}'
-              '${p.ratingAlert ? ' · note sous 4/5, à revoir' : ''}',
+              '${p.ratingAlert ? ' · note sous 4/5, à revoir' : ''}'
+              '${p.reliabilityAlert(app.now) ? ' · ${p.recentCancellations(app.now)} annulations en 30 jours' : ''}'
+              '${p.isPremium(app.now) ? ' · Premium' : ''}',
               style: TextStyle(
-                color: p.ratingAlert
+                color: _alert(p, app)
                     ? Theme.of(context).colorScheme.error
                     : null,
               ),
@@ -315,6 +317,7 @@ class _ActivityTab extends StatelessWidget {
       ('Commissions', fcfa(app.commissionTotal)),
       ('Argent bloqué', fcfa(app.escrowTotal)),
       ('Remboursements', fcfa(app.refundTotal)),
+      ('Abonnements Premium', fcfa(app.premiumRevenue)),
       ('Soldes clients', fcfa(app.clientBalances)),
       ('Soldes soignants', fcfa(app.proBalances)),
       (
@@ -400,3 +403,6 @@ class _ActivityTab extends StatelessWidget {
     );
   }
 }
+
+bool _alert(Pro p, AppState app) =>
+    p.ratingAlert || p.reliabilityAlert(app.now);

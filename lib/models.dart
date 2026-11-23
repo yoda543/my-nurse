@@ -1,3 +1,8 @@
+import 'rules.dart';
+import 'rules.dart' as rules;
+
+export 'rules.dart';
+
 /// Modèles métier MyNurse (V1).
 enum UserRole { patient, pro, admin }
 
@@ -85,7 +90,7 @@ const minTopUp = 500;
 const maxTopUp = 500000;
 const minWithdrawal = 1000;
 
-enum WalletTxKind { topUp, payment, refund, earning, withdrawal }
+enum WalletTxKind { topUp, payment, refund, earning, withdrawal, subscription }
 
 /// Un mouvement sur un solde MyNurse (montant positif = crédit).
 class WalletTx {
@@ -117,9 +122,9 @@ class Wallet {
       amount: amount,
       label: label,
     );
-    history
-      ..add(tx)
-      ..sort((a, b) => b.at.compareTo(a.at));
+    // Du plus récent au plus ancien ; à date égale, le dernier en tête.
+    final i = history.indexWhere((t) => !t.at.isAfter(tx.at));
+    history.insert(i == -1 ? history.length : i, tx);
     return true;
   }
 }
@@ -134,16 +139,6 @@ const communes = [
   'Yopougon',
 ];
 
-/// Règles tarifaires de la plateforme.
-const commissionRate = 0.15;
-const nightSurchargeRate = 0.5;
-
-/// Un pro dont la note passe sous ce seuil est signalé à l'administration.
-const ratingAlertThreshold = 4.0;
-
-/// Un soin est « de nuit » entre 21 h et 6 h.
-bool isNight(DateTime d) => d.hour >= 21 || d.hour < 6;
-
 class CareService {
   const CareService({
     required this.id,
@@ -152,6 +147,7 @@ class CareService {
     required this.minPrice,
     required this.maxPrice,
     this.needsPrescription = false,
+    this.durationMinutes = 60,
   });
 
   final String id;
@@ -160,6 +156,10 @@ class CareService {
   final int minPrice;
   final int maxPrice;
   final bool needsPrescription;
+
+  /// Durée du soin, déplacement compris : sert à éviter les doubles
+  /// réservations d'un même soignant.
+  final int durationMinutes;
 }
 
 class Pro {
@@ -180,6 +180,8 @@ class Pro {
     this.nightAvailable = false,
     Set<DocType>? documents,
     this.rejectionReason = '',
+    this.premiumUntil,
+    this.referredBy,
   }) : documents = documents ?? requiredDocs(type).toSet();
 
   final String id;
@@ -206,8 +208,31 @@ class Pro {
   final Wallet wallet = Wallet();
   String rejectionReason;
 
+  /// Fin de l'abonnement Pro Premium (null s'il n'y en a jamais eu).
+  DateTime? premiumUntil;
+
+  /// Soignant qui a parrainé celui-ci.
+  final Pro? referredBy;
+
+  /// Le parrainage n'est récompensé qu'à la première validation.
+  bool referralRewarded = false;
+
+  /// Dates des soins confirmés que ce soignant a annulés.
+  final List<DateTime> cancellations = [];
+
+  /// Code à donner aux collègues : un mois Premium offert par filleul vérifié.
+  String get referralCode =>
+      '${name.replaceFirst('Dr ', '').split(' ').first.toUpperCase()}-${id.replaceAll(RegExp(r'[^0-9]'), '')}';
+
   bool get verified => status == VerificationStatus.verified;
+  bool isPremium(DateTime now) =>
+      premiumUntil != null && premiumUntil!.isAfter(now);
   bool get ratingAlert => ratingCount >= 3 && rating < ratingAlertThreshold;
+  int recentCancellations(DateTime now) => cancellations
+      .where((d) => now.difference(d) <= proCancellationAlertPeriod)
+      .length;
+  bool reliabilityAlert(DateTime now) =>
+      recentCancellations(now) >= proCancellationAlertCount;
   List<DocType> get missingDocs =>
       requiredDocs(type).where((d) => !documents.contains(d)).toList();
 }
@@ -259,6 +284,26 @@ class CareLog {
   final String observations;
 }
 
+/// Suivi régulier : plusieurs séances réservées, acceptées et payées ensemble.
+class Contract {
+  Contract({required this.id, required this.frequency});
+
+  final String id;
+  final Frequency frequency;
+  final List<Booking> sessions = [];
+
+  int get total => sessions.fold(0, (s, b) => s + b.price);
+
+  /// Séances confirmées pas encore payées.
+  Iterable<Booking> get awaitingPayment =>
+      sessions.where((b) => b.awaitingPayment);
+  int get amountDue => awaitingPayment.fold(0, (s, b) => s + b.price);
+  int get doneCount =>
+      sessions.where((b) => b.status == BookingStatus.done).length;
+  DateTime get start => sessions.first.scheduledAt;
+  DateTime get end => sessions.last.scheduledAt;
+}
+
 class Booking {
   Booking({
     required this.id,
@@ -276,6 +321,10 @@ class Booking {
     this.careLog,
     this.rating,
     this.review = '',
+    required this.createdAt,
+    this.contract,
+    this.sessionIndex = 0,
+    this.commissionRate = rules.commissionRate,
   });
 
   final String id;
@@ -296,11 +345,48 @@ class Booking {
   int? rating;
   String review;
 
+  final DateTime createdAt;
+  DateTime? acceptedAt;
+
+  /// Suivi régulier dont cette séance fait partie.
+  final Contract? contract;
+  final int sessionIndex;
+  final double commissionRate;
+
   /// Paiement : l'argent est bloqué jusqu'à la fin du soin, puis reversé.
   PaymentMethod? paymentMethod;
   DateTime? paidAt;
   bool refunded = false;
   String cancelReason = '';
+
+  /// Part retenue sur une annulation tardive, versée au soignant.
+  int cancellationFee = 0;
+
+  /// Numéro du reçu, attribué quand le soin est terminé.
+  String? receiptNumber;
+
+  DateTime get endsAt =>
+      scheduledAt.add(Duration(minutes: service.durationMinutes));
+
+  /// Date limite de réponse du soignant.
+  DateTime get responseDeadline =>
+      earliest(createdAt.add(responseWindow), scheduledAt);
+
+  /// Date limite de paiement après la confirmation.
+  DateTime? get paymentDeadline => acceptedAt == null
+      ? null
+      : earliest(acceptedAt!.add(paymentWindow), scheduledAt);
+
+  /// Le compte rendu peut être rédigé à partir de cette heure.
+  DateTime get careLogOpensAt => scheduledAt.subtract(careLogEarliest);
+
+  /// Montant rendu au patient après une annulation.
+  int get refundAmount => refunded ? price - cancellationFee : 0;
+
+  String? get sessionLabel => contract == null
+      ? null
+      : 'Séance ${sessionIndex + 1}/${contract!.sessions.length} · '
+            '${contract!.frequency.label.toLowerCase()}';
 
   String get patientName => patient.name;
   bool get paid => paidAt != null;
@@ -311,8 +397,7 @@ class Booking {
   bool get awaitingPayment => status == BookingStatus.accepted && !paid;
 
   /// Prix payé par le patient (majoration de nuit incluse).
-  int get price =>
-      night ? (basePrice * (1 + nightSurchargeRate)).round() : basePrice;
+  int get price => careFee(basePrice, scheduledAt);
 
   int get commission => (price * commissionRate).round();
 

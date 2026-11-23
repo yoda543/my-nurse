@@ -9,6 +9,7 @@ const demoServices = <CareService>[
     minPrice: 5000,
     maxPrice: 8000,
     needsPrescription: true,
+    durationMinutes: 30,
   ),
   CareService(
     id: 'perfusion',
@@ -17,6 +18,7 @@ const demoServices = <CareService>[
     minPrice: 15000,
     maxPrice: 25000,
     needsPrescription: true,
+    durationMinutes: 120,
   ),
   CareService(
     id: 'pansement',
@@ -24,6 +26,7 @@ const demoServices = <CareService>[
     proType: ProType.infirmier,
     minPrice: 5000,
     maxPrice: 15000,
+    durationMinutes: 45,
   ),
   CareService(
     id: 'sonde',
@@ -32,6 +35,7 @@ const demoServices = <CareService>[
     minPrice: 10000,
     maxPrice: 15000,
     needsPrescription: true,
+    durationMinutes: 45,
   ),
   CareService(
     id: 'toilette',
@@ -39,6 +43,7 @@ const demoServices = <CareService>[
     proType: ProType.aideSoignant,
     minPrice: 5000,
     maxPrice: 12000,
+    durationMinutes: 60,
   ),
   CareService(
     id: 'consultation',
@@ -46,6 +51,7 @@ const demoServices = <CareService>[
     proType: ProType.medecin,
     minPrice: 15000,
     maxPrice: 30000,
+    durationMinutes: 45,
   ),
   CareService(
     id: 'kine',
@@ -54,6 +60,7 @@ const demoServices = <CareService>[
     minPrice: 10000,
     maxPrice: 15000,
     needsPrescription: true,
+    durationMinutes: 60,
   ),
   CareService(
     id: 'suivi_grossesse',
@@ -61,6 +68,7 @@ const demoServices = <CareService>[
     proType: ProType.sageFemme,
     minPrice: 10000,
     maxPrice: 15000,
+    durationMinutes: 60,
   ),
 ];
 

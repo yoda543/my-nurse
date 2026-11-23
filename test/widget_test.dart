@@ -6,6 +6,9 @@ import 'package:mynurse/main.dart';
 import 'package:mynurse/models.dart';
 
 final _day = DateTime(2030, 1, 10, 10);
+DateTime _now = DateTime(2030, 1, 1, 8);
+DateTime _clock() => _now;
+AppState _app() => AppState(clock: _clock);
 
 Booking _book(
   AppState app, {
@@ -24,10 +27,11 @@ Booking _book(
 
 void main() {
   setUpAll(() => initializeDateFormatting('fr_FR'));
+  setUp(() => _now = DateTime(2030, 1, 1, 8));
 
   group('prix', () {
     test('majoration de nuit de 50 % et commission de 15 %', () {
-      final app = AppState();
+      final app = _app();
       final day = _book(app);
       expect(day.price, 8000);
       expect(day.commission, 1200);
@@ -41,7 +45,7 @@ void main() {
 
   group('cycle d’un soin', () {
     test('demande, acceptation, paiement, compte rendu, note', () {
-      final app = AppState();
+      final app = _app();
       final pro = app.pros.first;
       final before = pro.careCount;
       final log = CareLog(
@@ -60,13 +64,17 @@ void main() {
       expect(b.awaitingPayment, isTrue);
 
       // Pas de compte rendu tant que le patient n'a pas payé.
-      app.submitCareLog(b, log);
+      expect(
+        () => app.submitCareLog(b, log),
+        throwsA(isA<BusinessRuleError>()),
+      );
       expect(b.status, BookingStatus.accepted);
 
       app.pay(b, PaymentMethod.wave);
       expect(b.readyForCare, isTrue);
       expect(app.escrowTotal, greaterThanOrEqualTo(b.price));
 
+      _now = _day;
       app.submitCareLog(b, log);
       expect(b.status, BookingStatus.done);
       expect(pro.careCount, before + 1);
@@ -77,7 +85,7 @@ void main() {
     });
 
     test('annulation après paiement : remboursement', () {
-      final app = AppState();
+      final app = _app();
       final b = _book(app);
       app.respond(b, accept: true);
       app.pay(b, PaymentMethod.orange);
@@ -88,14 +96,14 @@ void main() {
     });
 
     test('annulation avant paiement : rien à rembourser', () {
-      final app = AppState();
+      final app = _app();
       final b = _book(app);
       app.cancel(b);
       expect(b.refunded, isFalse);
     });
 
     test('un soin terminé ne peut plus être annulé', () {
-      final app = AppState();
+      final app = _app();
       final done = app.patientBookings.firstWhere(
         (b) => b.status == BookingStatus.done,
       );
@@ -106,7 +114,7 @@ void main() {
 
   group('porte-monnaie', () {
     test('recharge : limites et moyens acceptés', () {
-      final app = AppState();
+      final app = _app();
       final before = app.wallet.balance;
       app.topUp(10000, PaymentMethod.orange);
       expect(app.wallet.balance, before + 10000);
@@ -117,7 +125,7 @@ void main() {
     });
 
     test('payer avec le solde : refusé si insuffisant, débité sinon', () {
-      final app = AppState();
+      final app = _app();
       final b = _book(app);
       app.respond(b, accept: true);
       app.wallet.move(WalletTxKind.payment, -app.wallet.balance, 'vider');
@@ -131,7 +139,7 @@ void main() {
     });
 
     test('annulation : remboursement immédiat sur le solde', () {
-      final app = AppState();
+      final app = _app();
       final b = _book(app);
       app.respond(b, accept: true);
       app.pay(b, PaymentMethod.mtn);
@@ -142,7 +150,7 @@ void main() {
     });
 
     test('le soignant est crédité à la fin du soin, puis retire', () {
-      final app = AppState();
+      final app = _app();
       final aya = app.pros.first;
       final b = _book(app);
       app.respond(b, accept: true);
@@ -150,6 +158,7 @@ void main() {
       final before = aya.wallet.balance;
       expect(app.upcomingEarnings(aya), greaterThanOrEqualTo(b.proEarnings));
 
+      _now = _day;
       app.submitCareLog(
         b,
         CareLog(
@@ -174,7 +183,7 @@ void main() {
     });
 
     test('démo : soldes de départ cohérents avec l’historique', () {
-      final app = AppState();
+      final app = _app();
       int sum(Wallet w) => w.history.fold(0, (s, t) => s + t.amount);
       expect(app.wallet.balance, sum(app.wallet));
       expect(app.pros.first.wallet.balance, sum(app.pros.first.wallet));
@@ -184,7 +193,7 @@ void main() {
 
   group('soignants', () {
     test('un nouveau soignant reste invisible jusqu’à la vérification', () {
-      final app = AppState();
+      final app = _app();
       final pansement = app.services.firstWhere((s) => s.id == 'pansement');
       final before = app.prosFor(pansement, 'Yopougon').length;
       final p = app.registerPro(
@@ -207,7 +216,7 @@ void main() {
     });
 
     test('prix hors fourchette ou soin d’une autre profession refusés', () {
-      final app = AppState();
+      final app = _app();
       Pro reg(Map<String, int> prices) => app.registerPro(
         name: 'X',
         phone: '0102030405',
@@ -225,7 +234,7 @@ void main() {
     });
 
     test('dossier incomplet : validation impossible', () {
-      final app = AppState();
+      final app = _app();
       final p = app.registerPro(
         name: 'Incomplet',
         phone: '0102030406',
@@ -243,7 +252,7 @@ void main() {
     });
 
     test('suspension : soins à venir annulés et remboursés', () {
-      final app = AppState();
+      final app = _app();
       final aya = app.pros.first;
       final paid = app.bookings.firstWhere(
         (b) => b.pro == aya && b.readyForCare,
@@ -257,7 +266,7 @@ void main() {
     });
 
     test('connexion : numéro connu ou inscription', () {
-      final app = AppState();
+      final app = _app();
       app.loginPro(AppState.demoProPhone);
       expect(app.currentPro, app.pros.first);
       app.logout();
@@ -268,7 +277,7 @@ void main() {
 
   group('patients', () {
     test('réserver pour un proche : ses allergies suivent', () {
-      final app = AppState();
+      final app = _app();
       final mother = app.addPatient(
         name: 'Maman Bamba',
         relation: 'Mère',
@@ -281,14 +290,14 @@ void main() {
     });
 
     test('le carnet regroupe les comptes rendus de la personne', () {
-      final app = AppState();
+      final app = _app();
       final me = app.patients.first;
       expect(app.careHistory(me), hasLength(1));
       expect(app.careHistory(me).first.careLog!.acts, contains('pansement'));
     });
 
     test('recherche : seuls les pros vérifiés de la commune', () {
-      final app = AppState();
+      final app = _app();
       final kine = app.services.firstWhere((s) => s.id == 'kine');
       expect(app.prosFor(kine, 'Yopougon'), isEmpty);
       expect(app.prosFor(kine, 'Cocody').single.type, ProType.kine);
