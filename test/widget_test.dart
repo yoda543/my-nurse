@@ -31,16 +31,16 @@ void main() {
   setUp(() => _now = DateTime(2030, 1, 1, 8));
 
   group('prix', () {
-    test('majoration de nuit de 50 % et commission de 15 %', () async {
+    test('majoration de nuit de 50 % et commission de 10 %', () async {
       final app = _app();
       final day = await _book(app);
       expect(day.price, 8000);
-      expect(day.commission, 1200);
-      expect(day.proEarnings, 6800);
+      expect(day.commission, 800);
+      expect(day.proEarnings, 7200);
 
       final night = await _book(app, at: DateTime(2030, 1, 10, 22));
       expect(night.price, 12000);
-      expect(night.proEarnings, 10200);
+      expect(night.proEarnings, 10800);
     });
   });
 
