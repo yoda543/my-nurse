@@ -5,6 +5,7 @@ import '../../models.dart';
 import '../../theme.dart';
 import '../../widgets.dart';
 import 'booking_detail.dart';
+import 'health_record.dart';
 import 'patient_form.dart';
 import 'pros_list.dart';
 
@@ -25,6 +26,7 @@ class _PatientShellState extends State<PatientShell> {
         child: switch (_tab) {
           0 => const _HomeTab(),
           1 => const _BookingsTab(),
+          2 => HealthRecordsTab(onAddPatient: () => showPatientForm(context)),
           _ => const _ProfileTab(),
         },
       ),
@@ -32,14 +34,16 @@ class _PatientShellState extends State<PatientShell> {
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.search),
-            label: 'Trouver',
-          ),
+          NavigationDestination(icon: Icon(Icons.search), label: 'Trouver'),
           NavigationDestination(
             icon: Icon(Icons.event_note_outlined),
             selectedIcon: Icon(Icons.event_note),
             label: 'Mes soins',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.menu_book_outlined),
+            selectedIcon: Icon(Icons.menu_book),
+            label: 'Carnet',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),
@@ -53,15 +57,15 @@ class _PatientShellState extends State<PatientShell> {
 }
 
 IconData serviceIcon(CareService s) => switch (s.id) {
-      'injection' => Icons.vaccines_outlined,
-      'perfusion' => Icons.water_drop_outlined,
-      'pansement' => Icons.healing_outlined,
-      'sonde' => Icons.medical_services_outlined,
-      'toilette' => Icons.bathtub_outlined,
-      'consultation' => Icons.medical_information_outlined,
-      'kine' => Icons.accessibility_new,
-      _ => Icons.pregnant_woman,
-    };
+  'injection' => Icons.vaccines_outlined,
+  'perfusion' => Icons.water_drop_outlined,
+  'pansement' => Icons.healing_outlined,
+  'sonde' => Icons.medical_services_outlined,
+  'toilette' => Icons.bathtub_outlined,
+  'consultation' => Icons.medical_information_outlined,
+  'kine' => Icons.accessibility_new,
+  _ => Icons.pregnant_woman,
+};
 
 class _HomeTab extends StatelessWidget {
   const _HomeTab();
@@ -94,7 +98,8 @@ class _HomeTab extends StatelessWidget {
             prefixIcon: Icon(Icons.place_outlined),
           ),
           items: [
-            for (final c in communes) DropdownMenuItem(value: c, child: Text(c)),
+            for (final c in communes)
+              DropdownMenuItem(value: c, child: Text(c)),
           ],
           onChanged: (c) => app.setCommune(c!),
         ),
@@ -103,8 +108,10 @@ class _HomeTab extends StatelessWidget {
           Card(
             clipBehavior: Clip.antiAlias,
             child: ListTile(
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 6,
+              ),
               leading: CircleAvatar(
                 backgroundColor: const Color(0xFFD5EDE9),
                 child: Icon(serviceIcon(s), color: brandGreen),
@@ -230,6 +237,12 @@ class _ProfileTab extends StatelessWidget {
             children: [
               for (final p in app.patients)
                 ListTile(
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => HealthRecordScreen(patient: p),
+                    ),
+                  ),
                   leading: const Icon(Icons.person_outline),
                   title: Text(p.name),
                   subtitle: Text(

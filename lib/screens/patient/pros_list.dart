@@ -20,7 +20,8 @@ class ProsListScreen extends StatelessWidget {
       body: pros.isEmpty
           ? EmptyState(
               icon: Icons.person_search_outlined,
-              text: 'Aucun soignant vérifié disponible à ${app.commune} '
+              text:
+                  'Aucun soignant vérifié disponible à ${app.commune} '
                   'pour ce soin. Essayez une commune voisine.',
             )
           : ListView.separated(
@@ -190,14 +191,14 @@ class ProDetailScreen extends StatelessWidget {
   }
 
   Widget _info(IconData icon, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 20, color: Colors.black54),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text)),
-          ],
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: Colors.black54),
+        const SizedBox(width: 10),
+        Expanded(child: Text(text)),
+      ],
+    ),
+  );
 }

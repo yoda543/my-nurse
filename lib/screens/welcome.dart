@@ -10,9 +10,9 @@ class WelcomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    void go(UserRole role) => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => LoginScreen(role: role)),
-        );
+    void go(UserRole role) =>
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => LoginScreen(role: role)));
     return Scaffold(
       backgroundColor: brandGreen,
       body: SafeArea(
@@ -29,8 +29,11 @@ class WelcomeScreen extends StatelessWidget {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(18),
                 ),
-                child: const Icon(Icons.health_and_safety,
-                    color: brandGreen, size: 38),
+                child: const Icon(
+                  Icons.health_and_safety,
+                  color: brandGreen,
+                  size: 38,
+                ),
               ),
               const SizedBox(height: 24),
               const Text(
@@ -45,7 +48,11 @@ class WelcomeScreen extends StatelessWidget {
               const SizedBox(height: 8),
               const Text(
                 'Des soignants vérifiés, des soins suivis, partout à Abidjan.',
-                style: TextStyle(color: Colors.white, fontSize: 18, height: 1.35),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  height: 1.35,
+                ),
               ),
               const Spacer(flex: 2),
               FilledButton(
@@ -64,6 +71,14 @@ class WelcomeScreen extends StatelessWidget {
                 ),
                 onPressed: () => go(UserRole.pro),
                 child: const Text('Je suis professionnel de santé'),
+              ),
+              const SizedBox(height: 8),
+              Center(
+                child: TextButton(
+                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                  onPressed: () => go(UserRole.admin),
+                  child: const Text('Administration MyNurse'),
+                ),
               ),
             ],
           ),
@@ -113,7 +128,12 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _error = 'Code incorrect. Vérifiez le SMS reçu.');
       return;
     }
-    AppScope.of(context).login(widget.role);
+    final app = AppScope.of(context);
+    if (widget.role == UserRole.pro) {
+      app.loginPro(_phone.text);
+    } else {
+      app.login(widget.role, phone: _phone.text);
+    }
     Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
@@ -133,9 +153,15 @@ class _LoginScreenState extends State<LoginScreen> {
             Text(
               _codeSent
                   ? 'Code envoyé par SMS au +225 ${_phone.text}.'
-                  : widget.role == UserRole.pro
-                      ? 'Connectez-vous à votre espace soignant.'
-                      : 'Nous vous envoyons un code par SMS pour vous connecter.',
+                  : switch (widget.role) {
+                      UserRole.pro =>
+                        'Connectez-vous ou créez votre compte soignant. '
+                            'Démo : ${AppState.demoProPhone} ouvre un compte '
+                            'déjà vérifié, tout autre numéro lance '
+                            "l'inscription.",
+                      UserRole.admin => 'Accès réservé à l’équipe MyNurse.',
+                      UserRole.patient => 'Nous vous envoyons un code par SMS pour vous connecter.',
+                    },
               style: const TextStyle(fontSize: 16, color: Colors.black54),
             ),
             const SizedBox(height: 24),

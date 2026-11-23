@@ -5,99 +5,215 @@ import 'package:mynurse/app_state.dart';
 import 'package:mynurse/main.dart';
 import 'package:mynurse/models.dart';
 
-void main() {
-  setUpAll(() => initializeDateFormatting('fr_FR'));
+final _day = DateTime(2030, 1, 10, 10);
 
-  test('prix : majoration de nuit de 50 % et commission de 15 %', () {
-    final app = AppState();
-    final pro = app.pros.first;
-    final service = app.services.firstWhere((s) => s.id == 'pansement');
-    final day = app.book(
-      service: service,
-      pro: pro,
-      commune: 'Cocody',
-      address: 'Angré 8e tranche',
-      scheduledAt: DateTime(2030, 1, 10, 10),
-      hasPrescription: false,
-    );
-    expect(day.price, 8000);
-    expect(day.commission, 1200);
-    expect(day.proEarnings, 6800);
-
-    final night = app.book(
-      service: service,
-      pro: pro,
-      commune: 'Cocody',
-      address: 'Angré 8e tranche',
-      scheduledAt: DateTime(2030, 1, 10, 22),
-      hasPrescription: false,
-    );
-    expect(night.price, 12000);
-    expect(night.proEarnings, 10200);
-  });
-
-  test('cycle complet : demande, acceptation, compte rendu, note', () {
-    final app = AppState();
-    final pro = app.pros.first;
-    final before = pro.careCount;
-    final b = app.book(
-      service: app.services.first,
-      pro: pro,
-      commune: 'Cocody',
-      address: 'Angré 8e tranche',
-      scheduledAt: DateTime(2030, 1, 10, 10),
-      hasPrescription: true,
-    );
-    expect(b.status, BookingStatus.pending);
-
-    // Pas de compte rendu ni de note avant l'acceptation.
-    final log = CareLog(
-      arrivedAt: DateTime(2030, 1, 10, 10),
-      leftAt: DateTime(2030, 1, 10, 10, 30),
-      acts: 'Injection IM',
-    );
-    app.submitCareLog(b, log);
-    expect(b.status, BookingStatus.pending);
-
-    app.respond(b, accept: true);
-    app.submitCareLog(b, log);
-    expect(b.status, BookingStatus.done);
-    expect(pro.careCount, before + 1);
-
-    app.rate(b, 5, 'Très bien');
-    app.rate(b, 1, 'Deuxième note ignorée');
-    expect(b.rating, 5);
-  });
-
-  test('proche : le soin est au nom du proche et ses allergies suivent', () {
-    final app = AppState();
-    final mother = app.addPatient(
-      name: 'Maman Bamba',
-      relation: 'Mère',
-      allergies: 'Pénicilline',
-    );
-    final before = app.patientBookings.length;
-    final b = app.book(
-      service: app.services.first,
+Booking _book(AppState app, {String service = 'pansement', DateTime? at, Patient? patient}) =>
+    app.book(
+      service: app.services.firstWhere((s) => s.id == service),
       pro: app.pros.first,
       commune: 'Cocody',
       address: 'Angré 8e tranche',
-      scheduledAt: DateTime(2030, 1, 10, 10),
+      scheduledAt: at ?? _day,
       hasPrescription: true,
-      patient: mother,
+      patient: patient,
     );
-    expect(b.patientName, 'Maman Bamba');
-    expect(b.patientAllergies, 'Pénicilline');
-    expect(app.patientBookings.length, before + 1);
-    // Les demandes des autres patients ne sont pas dans « Mes soins ».
-    expect(app.patientBookings.every((e) => e.mine), isTrue);
+
+void main() {
+  setUpAll(() => initializeDateFormatting('fr_FR'));
+
+  group('prix', () {
+    test('majoration de nuit de 50 % et commission de 15 %', () {
+      final app = AppState();
+      final day = _book(app);
+      expect(day.price, 8000);
+      expect(day.commission, 1200);
+      expect(day.proEarnings, 6800);
+
+      final night = _book(app, at: DateTime(2030, 1, 10, 22));
+      expect(night.price, 12000);
+      expect(night.proEarnings, 10200);
+    });
   });
 
-  test('recherche : seuls les pros de la commune qui font ce soin', () {
-    final app = AppState();
-    final kine = app.services.firstWhere((s) => s.id == 'kine');
-    expect(app.prosFor(kine, 'Yopougon'), isEmpty);
-    expect(app.prosFor(kine, 'Cocody').single.type, ProType.kine);
+  group('cycle d’un soin', () {
+    test('demande, acceptation, paiement, compte rendu, note', () {
+      final app = AppState();
+      final pro = app.pros.first;
+      final before = pro.careCount;
+      final log = CareLog(
+        arrivedAt: _day,
+        leftAt: _day.add(const Duration(minutes: 30)),
+        acts: 'Pansement refait',
+      );
+      final b = _book(app);
+      expect(b.status, BookingStatus.pending);
+
+      // Pas de paiement avant l'acceptation.
+      app.pay(b, PaymentMethod.wave);
+      expect(b.paid, isFalse);
+
+      app.respond(b, accept: true);
+      expect(b.awaitingPayment, isTrue);
+
+      // Pas de compte rendu tant que le patient n'a pas payé.
+      app.submitCareLog(b, log);
+      expect(b.status, BookingStatus.accepted);
+
+      app.pay(b, PaymentMethod.wave);
+      expect(b.readyForCare, isTrue);
+      expect(app.escrowTotal, greaterThanOrEqualTo(b.price));
+
+      app.submitCareLog(b, log);
+      expect(b.status, BookingStatus.done);
+      expect(pro.careCount, before + 1);
+
+      app.rate(b, 5, 'Très bien');
+      app.rate(b, 1, 'Deuxième note ignorée');
+      expect(b.rating, 5);
+    });
+
+    test('annulation après paiement : remboursement', () {
+      final app = AppState();
+      final b = _book(app);
+      app.respond(b, accept: true);
+      app.pay(b, PaymentMethod.orange);
+      app.cancel(b);
+      expect(b.status, BookingStatus.cancelled);
+      expect(b.refunded, isTrue);
+      expect(app.refundTotal, b.price);
+    });
+
+    test('annulation avant paiement : rien à rembourser', () {
+      final app = AppState();
+      final b = _book(app);
+      app.cancel(b);
+      expect(b.refunded, isFalse);
+    });
+
+    test('un soin terminé ne peut plus être annulé', () {
+      final app = AppState();
+      final done = app.patientBookings
+          .firstWhere((b) => b.status == BookingStatus.done);
+      app.cancel(done);
+      expect(done.status, BookingStatus.done);
+    });
+  });
+
+  group('soignants', () {
+    test('un nouveau soignant reste invisible jusqu’à la vérification', () {
+      final app = AppState();
+      final pansement = app.services.firstWhere((s) => s.id == 'pansement');
+      final before = app.prosFor(pansement, 'Yopougon').length;
+      final p = app.registerPro(
+        name: 'Test Soignant',
+        phone: '0102030405',
+        type: ProType.infirmier,
+        communes: ['Yopougon'],
+        prices: {'pansement': 7000},
+        yearsExperience: 3,
+        bio: 'Infirmier diplômé.',
+        orderNumber: 'ONII-1',
+        nightAvailable: false,
+        documents: requiredDocs(ProType.infirmier).toSet(),
+      );
+      expect(p.status, VerificationStatus.pending);
+      expect(app.prosFor(pansement, 'Yopougon').length, before);
+
+      app.verifyPro(p);
+      expect(app.prosFor(pansement, 'Yopougon').length, before + 1);
+    });
+
+    test('prix hors fourchette ou soin d’une autre profession refusés', () {
+      final app = AppState();
+      Pro reg(Map<String, int> prices) => app.registerPro(
+            name: 'X',
+            phone: '0102030405',
+            type: ProType.infirmier,
+            communes: ['Cocody'],
+            prices: prices,
+            yearsExperience: 1,
+            bio: 'Bio',
+            orderNumber: 'ONII-2',
+            nightAvailable: false,
+            documents: requiredDocs(ProType.infirmier).toSet(),
+          );
+      expect(() => reg({'pansement': 100000}), throwsArgumentError);
+      expect(() => reg({'consultation': 20000}), throwsArgumentError);
+    });
+
+    test('dossier incomplet : validation impossible', () {
+      final app = AppState();
+      final p = app.registerPro(
+        name: 'Incomplet',
+        phone: '0102030406',
+        type: ProType.infirmier,
+        communes: ['Cocody'],
+        prices: {'pansement': 7000},
+        yearsExperience: 1,
+        bio: 'Bio',
+        orderNumber: 'ONII-3',
+        nightAvailable: false,
+        documents: {DocType.diplome},
+      );
+      expect(() => app.verifyPro(p), throwsStateError);
+      expect(p.status, VerificationStatus.pending);
+    });
+
+    test('suspension : soins à venir annulés et remboursés', () {
+      final app = AppState();
+      final aya = app.pros.first;
+      final paid = app.bookings.firstWhere((b) => b.pro == aya && b.readyForCare);
+      app.suspendPro(aya, 'Plainte en cours');
+      expect(aya.status, VerificationStatus.suspended);
+      expect(paid.status, BookingStatus.cancelled);
+      expect(paid.refunded, isTrue);
+      final pansement = app.services.firstWhere((s) => s.id == 'pansement');
+      expect(app.prosFor(pansement, 'Cocody').contains(aya), isFalse);
+    });
+
+    test('connexion : numéro connu ou inscription', () {
+      final app = AppState();
+      app.loginPro(AppState.demoProPhone);
+      expect(app.currentPro, app.pros.first);
+      app.logout();
+      app.loginPro('0999999999');
+      expect(app.currentPro, isNull);
+    });
+  });
+
+  group('patients', () {
+    test('réserver pour un proche : ses allergies suivent', () {
+      final app = AppState();
+      final mother = app.addPatient(
+        name: 'Maman Bamba',
+        relation: 'Mère',
+        allergies: 'Pénicilline',
+      );
+      final b = _book(app, service: 'injection', patient: mother);
+      expect(b.patientName, 'Maman Bamba');
+      expect(b.patient.allergies, 'Pénicilline');
+      expect(app.patientBookings.every((e) => e.mine), isTrue);
+    });
+
+    test('le carnet regroupe les comptes rendus de la personne', () {
+      final app = AppState();
+      final me = app.patients.first;
+      expect(app.careHistory(me), hasLength(1));
+      expect(app.careHistory(me).first.careLog!.acts, contains('pansement'));
+    });
+
+    test('recherche : seuls les pros vérifiés de la commune', () {
+      final app = AppState();
+      final kine = app.services.firstWhere((s) => s.id == 'kine');
+      expect(app.prosFor(kine, 'Yopougon'), isEmpty);
+      expect(app.prosFor(kine, 'Cocody').single.type, ProType.kine);
+      // Le dossier en attente de démonstration n'apparaît pas.
+      final injection = app.services.firstWhere((s) => s.id == 'injection');
+      expect(
+        app.prosFor(injection, 'Marcory').any((p) => !p.verified),
+        isFalse,
+      );
+    });
   });
 
   testWidgets('accueil puis connexion patient', (tester) async {
@@ -114,5 +230,37 @@ void main() {
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
     expect(find.text('De quel soin avez-vous besoin ?'), findsOneWidget);
+  });
+
+  testWidgets('un nouveau soignant arrive sur l’inscription', (tester) async {
+    final app = AppState()..loginPro('0999999999');
+    await tester.pumpWidget(MyNurseApp(state: app));
+    await tester.pumpAndSettle();
+    expect(find.text('Créer mon compte soignant'), findsOneWidget);
+  });
+
+  testWidgets('inscription : les champs vides du haut bloquent l’envoi',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final app = AppState()..loginPro('0999999999');
+    await tester.pumpWidget(MyNurseApp(state: app));
+    await tester.pumpAndSettle();
+    final send = find.text('Envoyer mon dossier');
+    await tester.ensureVisible(send);
+    await tester.pumpAndSettle();
+    await tester.tap(send);
+    await tester.pumpAndSettle();
+    expect(find.text('Corrigez les champs en rouge.'), findsOneWidget);
+    expect(app.currentPro, isNull);
+  });
+
+  testWidgets('l’administration voit le dossier en attente', (tester) async {
+    final app = AppState()..login(UserRole.admin);
+    await tester.pumpWidget(MyNurseApp(state: app));
+    await tester.pumpAndSettle();
+    expect(find.text('Dossiers à vérifier'), findsOneWidget);
+    expect(find.text('Bernadette Ouattara'), findsOneWidget);
   });
 }

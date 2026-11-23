@@ -96,92 +96,102 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
       appBar: AppBar(title: const Text('Compte rendu du soin')),
       body: Form(
         key: _formKey,
-        child: ListView(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-          children: [
-            Text(
-              b.service.name,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            Text(
-              '${b.patientName} · ${dateTimeLabel(b.scheduledAt)}',
-              style: const TextStyle(color: Colors.black54),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => _pick(true),
-                    child: Text('Arrivée ${timeLabel(_at(_arrival))}'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => _pick(false),
-                    child: Text('Départ ${timeLabel(_at(_departure))}'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            const Text('Constantes (facultatif)',
-                style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(child: _field(_bp, 'Tension', hint: '12/8')),
-                const SizedBox(width: 12),
-                Expanded(child: _field(_temp, 'Température °C', hint: '37,0')),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _field(_pulse, 'Pouls /min', hint: '72')),
-                const SizedBox(width: 12),
-                Expanded(child: _field(_gly, 'Glycémie g/L', hint: '1,10')),
-              ],
-            ),
-            const SizedBox(height: 20),
-            TextFormField(
-              controller: _acts,
-              minLines: 2,
-              maxLines: 5,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Actes réalisés',
-                alignLabelWithHint: true,
-              ),
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Décrivez les actes réalisés.'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _obs,
-              minLines: 2,
-              maxLines: 5,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Observations et suite à donner',
-                alignLabelWithHint: true,
-              ),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                b.service.name,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                '${b.patientName} · ${dateTimeLabel(b.scheduledAt)}',
+                style: const TextStyle(color: Colors.black54),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => _pick(true),
+                      child: Text('Arrivée ${timeLabel(_at(_arrival))}'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => _pick(false),
+                      child: Text('Départ ${timeLabel(_at(_departure))}'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Constantes (facultatif)',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(child: _field(_bp, 'Tension', hint: '12/8')),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _field(_temp, 'Température °C', hint: '37,0'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(child: _field(_pulse, 'Pouls /min', hint: '72')),
+                  const SizedBox(width: 12),
+                  Expanded(child: _field(_gly, 'Glycémie g/L', hint: '1,10')),
+                ],
+              ),
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _acts,
+                minLines: 2,
+                maxLines: 5,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Actes réalisés',
+                  alignLabelWithHint: true,
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Décrivez les actes réalisés.'
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _obs,
+                minLines: 2,
+                maxLines: 5,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Observations et suite à donner',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: _submit,
+                child: const Text('Terminer le soin'),
               ),
             ],
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: _submit,
-              child: const Text('Terminer le soin'),
-            ),
-          ],
+          ),
         ),
       ),
     );

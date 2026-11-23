@@ -6,7 +6,11 @@ import '../../models.dart';
 import 'patient_form.dart';
 
 class BookingFormScreen extends StatefulWidget {
-  const BookingFormScreen({super.key, required this.pro, required this.service});
+  const BookingFormScreen({
+    super.key,
+    required this.pro,
+    required this.service,
+  });
 
   final Pro pro;
   final CareService service;
@@ -47,8 +51,10 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
       lastDate: now.add(const Duration(days: 60)),
     );
     if (d != null) {
-      setState(() =>
-          _when = DateTime(d.year, d.month, d.day, _when.hour, _when.minute));
+      setState(
+        () =>
+            _when = DateTime(d.year, d.month, d.day, _when.hour, _when.minute),
+      );
     }
   }
 
@@ -58,8 +64,15 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
       initialTime: TimeOfDay.fromDateTime(_when),
     );
     if (t != null) {
-      setState(() => _when =
-          DateTime(_when.year, _when.month, _when.day, t.hour, t.minute));
+      setState(
+        () => _when = DateTime(
+          _when.year,
+          _when.month,
+          _when.day,
+          t.hour,
+          t.minute,
+        ),
+      );
     }
   }
 
@@ -71,9 +84,11 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
       return;
     }
     if (isNight(_when) && !widget.pro.nightAvailable) {
-      setState(() => _error =
-          '${widget.pro.name} ne fait pas de soins de nuit (21 h – 6 h). '
-          'Choisissez une autre heure ou un autre soignant.');
+      setState(
+        () => _error =
+            '${widget.pro.name} ne fait pas de soins de nuit (21 h – 6 h). '
+            'Choisissez une autre heure ou un autre soignant.',
+      );
       return;
     }
     if (widget.service.needsPrescription && !_prescription) {
@@ -107,138 +122,144 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
       appBar: AppBar(title: const Text('Réserver')),
       body: Form(
         key: _formKey,
-        child: ListView(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-          children: [
-            Text(
-              widget.service.name,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            Text(
-              'avec ${widget.pro.name} · ${app.commune}',
-              style: const TextStyle(color: Colors.black54),
-            ),
-            const SizedBox(height: 20),
-            DropdownButtonFormField<Patient>(
-              key: ValueKey(app.patients.length),
-              initialValue: _patient ?? app.patients.first,
-              decoration: const InputDecoration(
-                labelText: 'Pour qui est le soin ?',
-                prefixIcon: Icon(Icons.person_outline),
-              ),
-              items: [
-                for (final p in app.patients)
-                  DropdownMenuItem(
-                    value: p,
-                    child: Text('${p.name} (${p.relation})'),
-                  ),
-              ],
-              onChanged: (p) => setState(() => _patient = p),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () async {
-                  final p = await showPatientForm(context);
-                  if (p != null) setState(() => _patient = p);
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Ajouter un proche'),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickDate,
-                    icon: const Icon(Icons.event_outlined),
-                    label: Text(
-                      '${_when.day.toString().padLeft(2, '0')}/'
-                      '${_when.month.toString().padLeft(2, '0')}/${_when.year}',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickTime,
-                    icon: const Icon(Icons.schedule),
-                    label: Text(timeLabel(_when)),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _address,
-              minLines: 2,
-              maxLines: 3,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Adresse et repères',
-                hintText: 'Quartier, résidence, repère connu…',
-                alignLabelWithHint: true,
-              ),
-              validator: (v) => (v == null || v.trim().length < 8)
-                  ? "Indiquez l'adresse avec un repère."
-                  : null,
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _note,
-              minLines: 2,
-              maxLines: 4,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Précisions pour le soignant (facultatif)',
-                alignLabelWithHint: true,
-              ),
-            ),
-            if (widget.service.needsPrescription) ...[
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                value: _prescription,
-                onChanged: (v) => setState(() => _prescription = v!),
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text("J'ai une ordonnance pour ce soin"),
-                subtitle: const Text('Le soignant la vérifiera sur place.'),
-              ),
-            ],
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    _row('Prix du soin', fcfa(base)),
-                    if (night)
-                      _row('Majoration de nuit (50 %)', fcfa(total - base)),
-                    const Divider(height: 20),
-                    _row('Total', fcfa(total), bold: true),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Paiement Mobile Money après confirmation du soignant.',
-                      style: TextStyle(color: Colors.black54, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                widget.service.name,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                'avec ${widget.pro.name} · ${app.commune}',
+                style: const TextStyle(color: Colors.black54),
+              ),
+              const SizedBox(height: 20),
+              DropdownButtonFormField<Patient>(
+                key: ValueKey(app.patients.length),
+                initialValue: _patient ?? app.patients.first,
+                decoration: const InputDecoration(
+                  labelText: 'Pour qui est le soin ?',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                items: [
+                  for (final p in app.patients)
+                    DropdownMenuItem(
+                      value: p,
+                      child: Text('${p.name} (${p.relation})'),
+                    ),
+                ],
+                onChanged: (p) => setState(() => _patient = p),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final p = await showPatientForm(context);
+                    if (p != null) setState(() => _patient = p);
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Ajouter un proche'),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _pickDate,
+                      icon: const Icon(Icons.event_outlined),
+                      label: Text(
+                        '${_when.day.toString().padLeft(2, '0')}/'
+                        '${_when.month.toString().padLeft(2, '0')}/${_when.year}',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _pickTime,
+                      icon: const Icon(Icons.schedule),
+                      label: Text(timeLabel(_when)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _address,
+                minLines: 2,
+                maxLines: 3,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Adresse et repères',
+                  hintText: 'Quartier, résidence, repère connu…',
+                  alignLabelWithHint: true,
+                ),
+                validator: (v) => (v == null || v.trim().length < 8)
+                    ? "Indiquez l'adresse avec un repère."
+                    : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _note,
+                minLines: 2,
+                maxLines: 4,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Précisions pour le soignant (facultatif)',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              if (widget.service.needsPrescription) ...[
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: _prescription,
+                  onChanged: (v) => setState(() => _prescription = v!),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text("J'ai une ordonnance pour ce soin"),
+                  subtitle: const Text('Le soignant la vérifiera sur place.'),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      _row('Prix du soin', fcfa(base)),
+                      if (night)
+                        _row('Majoration de nuit (50 %)', fcfa(total - base)),
+                      const Divider(height: 20),
+                      _row('Total', fcfa(total), bold: true),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Paiement Mobile Money après confirmation du soignant.',
+                        style: TextStyle(color: Colors.black54, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: _submit,
+                child: const Text('Envoyer la demande'),
               ),
             ],
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: _submit,
-              child: const Text('Envoyer la demande'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -275,7 +296,11 @@ class _ConfirmationScreen extends StatelessWidget {
           child: Column(
             children: [
               const Spacer(),
-              const Icon(Icons.check_circle, size: 72, color: Color(0xFF0B7A6E)),
+              const Icon(
+                Icons.check_circle,
+                size: 72,
+                color: Color(0xFF0B7A6E),
+              ),
               const SizedBox(height: 20),
               const Text(
                 'Demande envoyée',

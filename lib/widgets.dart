@@ -42,8 +42,10 @@ class ProAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final parts =
-        pro.name.replaceFirst('Dr ', '').split(' ').where((e) => e.isNotEmpty);
+    final parts = pro.name
+        .replaceFirst('Dr ', '')
+        .split(' ')
+        .where((e) => e.isNotEmpty);
     final initials = parts.take(2).map((e) => e[0]).join();
     return CircleAvatar(
       radius: radius,
@@ -93,17 +95,23 @@ class StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (bg, fg) = switch (status) {
-      BookingStatus.pending => (const Color(0xFFFFF1D6), const Color(0xFF8A5A00)),
+      BookingStatus.pending => (
+        const Color(0xFFFFF1D6),
+        const Color(0xFF8A5A00),
+      ),
       BookingStatus.accepted => (const Color(0xFFD5EDE9), brandGreen),
       BookingStatus.done => (const Color(0xFFE4E8EA), brandInk),
-      BookingStatus.refused ||
-      BookingStatus.cancelled =>
-        (const Color(0xFFFBE0DA), const Color(0xFF9C2B12)),
+      BookingStatus.refused || BookingStatus.cancelled => (
+        const Color(0xFFFBE0DA),
+        const Color(0xFF9C2B12),
+      ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration:
-          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+      ),
       child: Text(
         status.label,
         style: TextStyle(color: fg, fontSize: 12, fontWeight: FontWeight.w700),
@@ -159,12 +167,16 @@ class BookingCard extends StatelessWidget {
                 _line(Icons.person_outline, b.patientName)
               else ...[
                 _line(Icons.person_outline, 'Pour ${b.patientName}'),
-                _line(Icons.medical_services_outlined,
-                    '${b.pro.name} · ${b.pro.type.label}'),
+                _line(
+                  Icons.medical_services_outlined,
+                  '${b.pro.name} · ${b.pro.type.label}',
+                ),
               ],
-              if (forPro && b.patientAllergies.isNotEmpty)
-                _line(Icons.warning_amber_rounded,
-                    'Allergies : ${b.patientAllergies}'),
+              if (forPro && b.patient.allergies.isNotEmpty)
+                _line(
+                  Icons.warning_amber_rounded,
+                  'Allergies : ${b.patient.allergies}',
+                ),
               _line(Icons.event_outlined, dateTimeLabel(b.scheduledAt)),
               _line(Icons.place_outlined, '${b.commune} · ${b.address}'),
               _line(
@@ -173,6 +185,8 @@ class BookingCard extends StatelessWidget {
                     ? '${fcfa(b.proEarnings)} pour vous'
                     : '${fcfa(b.price)}${b.night ? ' (majoration de nuit)' : ''}',
               ),
+              if (paymentLabel(b) case final label?)
+                _line(Icons.account_balance_wallet_outlined, label),
               if (footer != null) ...[const SizedBox(height: 12), footer!],
             ],
           ),
@@ -182,16 +196,83 @@ class BookingCard extends StatelessWidget {
   }
 
   Widget _line(IconData icon, String text) => Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 18, color: Colors.black54),
-            const SizedBox(width: 8),
-            Expanded(child: Text(text)),
-          ],
-        ),
-      );
+    padding: const EdgeInsets.only(top: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: Colors.black54),
+        const SizedBox(width: 8),
+        Expanded(child: Text(text)),
+      ],
+    ),
+  );
+}
+
+/// Où en est l'argent du soin, en une ligne.
+String? paymentLabel(Booking b) {
+  if (b.refunded) return 'Remboursé (${b.paymentMethod!.label})';
+  if (b.status == BookingStatus.cancelled && b.cancelReason.isNotEmpty) {
+    return b.cancelReason;
+  }
+  if (b.awaitingPayment) return 'En attente du paiement';
+  if (b.readyForCare) {
+    return 'Payé par ${b.paymentMethod!.label}, bloqué jusqu’à la fin du soin';
+  }
+  if (b.status == BookingStatus.done && b.paid) {
+    return 'Payé par ${b.paymentMethod!.label}, reversé au soignant';
+  }
+  return null;
+}
+
+class SectionTitle extends StatelessWidget {
+  const SectionTitle(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+    child: Text(
+      text,
+      style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+    ),
+  );
+}
+
+class InfoBanner extends StatelessWidget {
+  const InfoBanner({
+    super.key,
+    required this.icon,
+    required this.text,
+    this.warning = false,
+  });
+
+  final IconData icon;
+  final String text;
+  final bool warning;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = warning ? const Color(0xFFFFF1D6) : const Color(0xFFD5EDE9);
+    final fg = warning ? const Color(0xFF6B4500) : brandInk;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: fg),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(text, style: TextStyle(color: fg, height: 1.35)),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class EmptyState extends StatelessWidget {

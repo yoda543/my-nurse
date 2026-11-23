@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'app_state.dart';
 import 'models.dart';
+import 'screens/admin/admin_shell.dart';
 import 'screens/patient/patient_shell.dart';
 import 'screens/pro/pro_shell.dart';
 import 'screens/welcome.dart';
@@ -45,6 +46,7 @@ class _Root extends StatelessWidget {
       null => const WelcomeScreen(),
       UserRole.patient => const PatientShell(),
       UserRole.pro => const ProShell(),
+      UserRole.admin => const AdminShell(),
     };
   }
 }

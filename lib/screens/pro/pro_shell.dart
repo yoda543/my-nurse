@@ -5,6 +5,7 @@ import '../../format.dart';
 import '../../models.dart';
 import '../../widgets.dart';
 import 'care_log_form.dart';
+import 'pro_onboarding.dart';
 
 class ProShell extends StatefulWidget {
   const ProShell({super.key});
@@ -18,8 +19,11 @@ class _ProShellState extends State<ProShell> {
 
   @override
   Widget build(BuildContext context) {
-    final pending =
-        AppScope.of(context).proBookings(BookingStatus.pending).length;
+    final app = AppScope.of(context);
+    final pro = app.currentPro;
+    if (pro == null) return const ProOnboardingScreen();
+    if (!pro.verified) return ProStatusScreen(pro: pro);
+    final pending = app.proBookings(BookingStatus.pending).length;
     return Scaffold(
       body: SafeArea(
         child: switch (_tab) {
@@ -59,21 +63,6 @@ class _ProShellState extends State<ProShell> {
   }
 }
 
-class _TabTitle extends StatelessWidget {
-  const _TabTitle(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-        child: Text(
-          text,
-          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
-        ),
-      );
-}
-
 class _RequestsTab extends StatelessWidget {
   const _RequestsTab();
 
@@ -84,7 +73,7 @@ class _RequestsTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _TabTitle('Nouvelles demandes'),
+        const SectionTitle('Nouvelles demandes'),
         Expanded(
           child: list.isEmpty
               ? const EmptyState(
@@ -107,6 +96,14 @@ class _RequestsTab extends StatelessWidget {
                             Padding(
                               padding: const EdgeInsets.only(bottom: 12),
                               child: Text('« ${b.note} »'),
+                            ),
+                          if (b.service.needsPrescription)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 12),
+                              child: Text(
+                                'Sur ordonnance : vérifiez-la avant le soin.',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
                             ),
                           Row(
                             children: [
@@ -147,7 +144,7 @@ class _PlanningTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _TabTitle('Soins à réaliser'),
+        const SectionTitle('Soins à réaliser'),
         Expanded(
           child: list.isEmpty
               ? const EmptyState(
@@ -163,15 +160,24 @@ class _PlanningTab extends StatelessWidget {
                     return BookingCard(
                       booking: b,
                       forPro: true,
-                      footer: FilledButton.icon(
-                        onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => CareLogFormScreen(booking: b),
-                          ),
-                        ),
-                        icon: const Icon(Icons.edit_note),
-                        label: const Text('Rédiger le compte rendu'),
-                      ),
+                      footer: b.readyForCare
+                          ? FilledButton.icon(
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => CareLogFormScreen(booking: b),
+                                ),
+                              ),
+                              icon: const Icon(Icons.edit_note),
+                              label: const Text('Rédiger le compte rendu'),
+                            )
+                          : const InfoBanner(
+                              icon: Icons.hourglass_top_rounded,
+                              warning: true,
+                              text:
+                                  'Le patient n’a pas encore payé. Ne vous '
+                                  'déplacez pas avant la confirmation du '
+                                  'paiement.',
+                            ),
                     );
                   },
                 ),
@@ -186,13 +192,18 @@ class _EarningsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final done = AppScope.of(context).proBookings(BookingStatus.done);
+    final app = AppScope.of(context);
+    final done = app.proBookings(BookingStatus.done);
     final total = done.fold<int>(0, (s, b) => s + b.proEarnings);
     final commission = done.fold<int>(0, (s, b) => s + b.commission);
+    final blocked = app
+        .proBookings(BookingStatus.accepted)
+        .where((b) => b.readyForCare)
+        .fold<int>(0, (s, b) => s + b.proEarnings);
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
       children: [
-        const _TabTitle('Revenus'),
+        const SectionTitle('Revenus'),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Card(
@@ -201,8 +212,10 @@ class _EarningsTab extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Gains nets',
-                      style: TextStyle(color: Colors.black54)),
+                  const Text(
+                    'Gains versés',
+                    style: TextStyle(color: Colors.black54),
+                  ),
                   Text(
                     fcfa(total),
                     style: const TextStyle(
@@ -217,6 +230,13 @@ class _EarningsTab extends StatelessWidget {
                     'MyNurse ${fcfa(commission)}',
                     style: const TextStyle(color: Colors.black54),
                   ),
+                  if (blocked > 0) ...[
+                    const Divider(height: 24),
+                    Text(
+                      '${fcfa(blocked)} déjà payés par vos patients, versés '
+                      'dès que vous terminez les soins.',
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -227,7 +247,9 @@ class _EarningsTab extends StatelessWidget {
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             title: Text(b.service.name),
-            subtitle: Text('${b.patientName} · ${dateTimeLabel(b.scheduledAt)}'),
+            subtitle: Text(
+              '${b.patientName} · ${dateTimeLabel(b.scheduledAt)}',
+            ),
             trailing: Text(
               '+ ${fcfa(b.proEarnings)}',
               style: const TextStyle(fontWeight: FontWeight.w700),
@@ -244,11 +266,11 @@ class _ProProfileTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
-    final p = app.currentPro;
+    final p = app.currentPro!;
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
       children: [
-        const _TabTitle('Profil'),
+        const SectionTitle('Profil'),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Column(
@@ -286,18 +308,69 @@ class _ProProfileTab extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Zones couvertes',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final c in communes)
+                            FilterChip(
+                              label: Text(c),
+                              selected: p.communes.contains(c),
+                              onSelected: (on) {
+                                final next = communes
+                                    .where(
+                                      (x) =>
+                                          x == c ? on : p.communes.contains(x),
+                                    )
+                                    .toList();
+                                if (next.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Gardez au moins une commune.',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                app.updateProAvailability(
+                                  p,
+                                  communes: next,
+                                  nightAvailable: p.nightAvailable,
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: p.nightAvailable,
+                        onChanged: (v) => app.updateProAvailability(
+                          p,
+                          communes: p.communes,
+                          nightAvailable: v,
+                        ),
+                        title: const Text('Disponible la nuit'),
+                        subtitle: const Text('21 h – 6 h, majoration de 50 %'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
                 child: Column(
                   children: [
-                    ListTile(
-                      leading: const Icon(Icons.place_outlined),
-                      title: const Text('Zones couvertes'),
-                      subtitle: Text(p.communes.join(', ')),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.nightlight_outlined),
-                      title: const Text('Soins de nuit'),
-                      subtitle: Text(p.nightAvailable ? 'Oui' : 'Non'),
-                    ),
                     for (final s in app.services)
                       if (p.prices.containsKey(s.id))
                         ListTile(

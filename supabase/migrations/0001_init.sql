@@ -27,7 +27,8 @@ create table public.patients (
   birth_date date,
   relation text not null default 'moi',
   allergies text not null default '',
-  medical_notes text not null default '',
+  history text not null default '',
+  treatments text not null default '',
   created_at timestamptz not null default now()
 );
 create index patients_owner_idx on public.patients (owner_id);
@@ -42,6 +43,7 @@ create table public.pros (
   night_available boolean not null default false,
   order_number text,
   verification_status public.verification_status not null default 'pending',
+  rejection_reason text not null default '',
   rating_avg numeric(3, 2) not null default 0,
   rating_count int not null default 0,
   care_count int not null default 0,
@@ -97,6 +99,12 @@ create table public.bookings (
   price int not null default 0,
   commission int not null default 0,
   status public.booking_status not null default 'pending',
+  -- Paiement : confirmé uniquement par le serveur (webhook de l'agrégateur).
+  payment_method text check (payment_method in ('orange', 'mtn', 'moov', 'wave')),
+  payment_ref text,
+  paid_at timestamptz,
+  refunded boolean not null default false,
+  cancel_reason text not null default '',
   created_at timestamptz not null default now()
 );
 create index bookings_booked_by_idx on public.bookings (booked_by, scheduled_at desc);
@@ -229,9 +237,10 @@ create function private.on_care_log() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
   update public.bookings set status = 'done'
-    where id = new.booking_id and pro_id = new.pro_id and status = 'accepted';
+    where id = new.booking_id and pro_id = new.pro_id and status = 'accepted'
+      and paid_at is not null;
   if not found then
-    raise exception 'Ce soin n''est pas confirmé ou ne vous est pas attribué.';
+    raise exception 'Ce soin n''est pas confirmé, pas payé ou ne vous est pas attribué.';
   end if;
   update public.pros set care_count = care_count + 1 where id = new.pro_id;
   return new;
@@ -269,7 +278,9 @@ $$;
 create function public.cancel_booking(p_booking uuid) returns void
 language plpgsql security definer set search_path = '' as $$
 begin
-  update public.bookings set status = 'cancelled'
+  update public.bookings
+    set status = 'cancelled', refunded = paid_at is not null,
+        cancel_reason = 'Annulé par le patient'
     where id = p_booking and booked_by = (select auth.uid()) and status in ('pending', 'accepted');
   if not found then
     raise exception 'Ce soin ne peut plus être annulé.';
@@ -277,24 +288,123 @@ begin
 end;
 $$;
 
-create function public.admin_set_pro_status(p_pro uuid, p_status public.verification_status) returns void
-language plpgsql security definer set search_path = '' as $$
+create function private.required_docs(p_type public.pro_type) returns text[]
+language sql immutable set search_path = '' as $$
+  select case when p_type in ('infirmier', 'medecin', 'sage_femme')
+    then array['diplome', 'autorisation', 'ordre', 'cni', 'rc_pro']
+    else array['diplome', 'autorisation', 'cni', 'rc_pro'] end;
+$$;
+
+create function private.require_admin() returns void
+language plpgsql stable security definer set search_path = '' as $$
 begin
   if not private.is_admin() then
     raise exception 'Réservé à l''administration.';
   end if;
-  update public.pros set verification_status = p_status where id = p_pro;
+end;
+$$;
+
+-- Valide (ou réactive) un soignant dont le dossier est complet.
+create function public.admin_verify_pro(p_pro uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_type public.pro_type;
+begin
+  perform private.require_admin();
+  select pro_type into v_type from public.pros
+    where id = p_pro and verification_status in ('pending', 'suspended');
+  if v_type is null then
+    raise exception 'Ce dossier n''est pas à valider.';
+  end if;
+  if exists (
+    select unnest(private.required_docs(v_type))
+    except select doc_type from public.pro_documents where pro_id = p_pro
+  ) then
+    raise exception 'Dossier incomplet.';
+  end if;
+  update public.pros set verification_status = 'verified', rejection_reason = ''
+    where id = p_pro;
+end;
+$$;
+
+create function public.admin_reject_pro(p_pro uuid, p_reason text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform private.require_admin();
+  if coalesce(trim(p_reason), '') = '' then
+    raise exception 'Indiquez un motif.';
+  end if;
+  update public.pros set verification_status = 'rejected', rejection_reason = p_reason
+    where id = p_pro and verification_status = 'pending';
+  if not found then
+    raise exception 'Ce dossier n''est pas en attente.';
+  end if;
+end;
+$$;
+
+-- Suspend un soignant : ses soins à venir sont annulés, et remboursés si payés.
+create function public.admin_suspend_pro(p_pro uuid, p_reason text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform private.require_admin();
+  if coalesce(trim(p_reason), '') = '' then
+    raise exception 'Indiquez un motif.';
+  end if;
+  update public.pros set verification_status = 'suspended', rejection_reason = p_reason
+    where id = p_pro and verification_status = 'verified';
+  if not found then
+    raise exception 'Ce soignant n''est pas actif.';
+  end if;
+  update public.bookings
+    set status = 'cancelled', refunded = paid_at is not null,
+        cancel_reason = 'Soignant suspendu par MyNurse'
+    where pro_id = p_pro and status in ('pending', 'accepted');
+end;
+$$;
+
+-- Le soignant refusé renvoie son dossier après l'avoir complété.
+create function public.resubmit_pro() returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  update public.pros set verification_status = 'pending', rejection_reason = ''
+    where id = (select auth.uid()) and verification_status = 'rejected';
+  if not found then
+    raise exception 'Aucun dossier refusé à renvoyer.';
+  end if;
+end;
+$$;
+
+-- Appelée uniquement par le webhook de l'agrégateur de paiement (clé serveur),
+-- jamais par l'app.
+create function public.confirm_payment(p_booking uuid, p_method text, p_ref text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  update public.bookings
+    set paid_at = now(), payment_method = p_method, payment_ref = p_ref
+    where id = p_booking and status = 'accepted' and paid_at is null;
+  if not found then
+    raise exception 'Réservation non payable.';
+  end if;
 end;
 $$;
 
 revoke execute on function public.respond_booking(uuid, boolean) from public, anon;
 revoke execute on function public.cancel_booking(uuid) from public, anon;
-revoke execute on function public.admin_set_pro_status(uuid, public.verification_status) from public, anon;
+revoke execute on function public.admin_verify_pro(uuid) from public, anon;
+revoke execute on function public.admin_reject_pro(uuid, text) from public, anon;
+revoke execute on function public.admin_suspend_pro(uuid, text) from public, anon;
+revoke execute on function public.resubmit_pro() from public, anon;
+revoke execute on function public.confirm_payment(uuid, text, text) from public, anon, authenticated;
 grant execute on function public.respond_booking(uuid, boolean) to authenticated;
 grant execute on function public.cancel_booking(uuid) to authenticated;
-grant execute on function public.admin_set_pro_status(uuid, public.verification_status) to authenticated;
+grant execute on function public.admin_verify_pro(uuid) to authenticated;
+grant execute on function public.admin_reject_pro(uuid, text) to authenticated;
+grant execute on function public.admin_suspend_pro(uuid, text) to authenticated;
+grant execute on function public.resubmit_pro() to authenticated;
 grant usage on schema private to authenticated;
 grant execute on function private.is_admin() to authenticated;
+grant execute on function private.require_admin() to authenticated;
+grant execute on function private.required_docs(public.pro_type) to authenticated;
 grant execute on function private.owns_patient(uuid) to authenticated;
 grant execute on function private.treats_patient(uuid) to authenticated;
 

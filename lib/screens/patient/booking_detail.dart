@@ -4,6 +4,7 @@ import '../../app_state.dart';
 import '../../format.dart';
 import '../../models.dart';
 import '../../widgets.dart';
+import 'payment_screen.dart';
 
 class BookingDetailScreen extends StatelessWidget {
   const BookingDetailScreen({super.key, required this.booking});
@@ -15,14 +16,39 @@ class BookingDetailScreen extends StatelessWidget {
     final app = AppScope.of(context);
     final b = booking;
     final log = b.careLog;
-    final canCancel = b.status == BookingStatus.pending ||
-        b.status == BookingStatus.accepted;
+    final canCancel =
+        b.status == BookingStatus.pending || b.status == BookingStatus.accepted;
     return Scaffold(
       appBar: AppBar(title: const Text('Détail du soin')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
         children: [
           BookingCard(booking: b, forPro: false),
+          if (b.status == BookingStatus.pending) ...[
+            const SizedBox(height: 16),
+            InfoBanner(
+              icon: Icons.hourglass_top_rounded,
+              text:
+                  '${b.pro.name} doit confirmer votre demande. Vous payerez '
+                  'ensuite, avant le soin.',
+            ),
+          ],
+          if (b.awaitingPayment) ...[
+            const SizedBox(height: 16),
+            InfoBanner(
+              icon: Icons.check_circle_outline,
+              text:
+                  '${b.pro.name} a confirmé. Payez pour valider le '
+                  'rendez-vous.',
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => PaymentScreen(booking: b)),
+              ),
+              child: Text('Payer ${fcfa(b.price)}'),
+            ),
+          ],
           if (log != null) ...[
             const SizedBox(height: 20),
             const Text(
@@ -39,8 +65,10 @@ class BookingDetailScreen extends StatelessWidget {
             else
               Card(
                 child: ListTile(
-                  leading: const Icon(Icons.star_rounded,
-                      color: Color(0xFFE8A317)),
+                  leading: const Icon(
+                    Icons.star_rounded,
+                    color: Color(0xFFE8A317),
+                  ),
                   title: Text('Votre note : ${b.rating}/5'),
                   subtitle: b.review.isEmpty ? null : Text(b.review),
                 ),
@@ -57,7 +85,11 @@ class BookingDetailScreen extends StatelessWidget {
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text('Annuler ce soin ?'),
-                    content: Text('${b.pro.name} sera prévenu(e).'),
+                    content: Text(
+                      '${b.pro.name} sera prévenu(e).'
+                      '${b.paid ? ' Vous serez remboursé de ${fcfa(b.price)} '
+                                'sur votre compte ${b.paymentMethod!.label}.' : ''}',
+                    ),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context, false),
@@ -114,13 +146,17 @@ class CareLogCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 10),
-            const Text('Actes réalisés',
-                style: TextStyle(fontWeight: FontWeight.w700)),
+            const Text(
+              'Actes réalisés',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
             Text(log.acts),
             if (log.observations.isNotEmpty) ...[
               const SizedBox(height: 10),
-              const Text('Observations',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
+              const Text(
+                'Observations',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
               Text(log.observations),
             ],
           ],
@@ -181,15 +217,17 @@ class _RatingFormState extends State<_RatingForm> {
               controller: _review,
               maxLines: 2,
               textCapitalization: TextCapitalization.sentences,
-              decoration:
-                  const InputDecoration(labelText: 'Votre avis (facultatif)'),
+              decoration: const InputDecoration(
+                labelText: 'Votre avis (facultatif)',
+              ),
             ),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: _stars == 0
                   ? null
-                  : () => AppScope.of(context)
-                      .rate(widget.booking, _stars, _review.text.trim()),
+                  : () =>
+                        AppScope.of(context)
+                            .rate(widget.booking, _stars, _review.text.trim()),
               child: const Text('Envoyer ma note'),
             ),
           ],
