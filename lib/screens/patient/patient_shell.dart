@@ -68,8 +68,24 @@ IconData serviceIcon(CareService s) => switch (s.id) {
   _ => Icons.pregnant_woman,
 };
 
-class _HomeTab extends StatelessWidget {
+class _HomeTab extends StatefulWidget {
   const _HomeTab();
+
+  @override
+  State<_HomeTab> createState() => _HomeTabState();
+}
+
+class _HomeTabState extends State<_HomeTab> {
+  @override
+  void initState() {
+    super.initState();
+    // La commune se choisit toute seule à partir de la position.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final app = AppScope.of(context);
+      if (app.place == null && !app.locating) app.detectPlace();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -95,6 +111,7 @@ class _HomeTab extends StatelessWidget {
         const PatientWalletCard(),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
+          key: ValueKey(app.commune),
           initialValue: app.commune,
           decoration: const InputDecoration(
             labelText: 'Commune du soin',
@@ -106,6 +123,8 @@ class _HomeTab extends StatelessWidget {
           ],
           onChanged: (c) => app.setCommune(c!),
         ),
+        const SizedBox(height: 6),
+        LocationStatus(onRetry: app.detectPlace),
         const SizedBox(height: 20),
         for (final s in app.services) ...[
           Card(

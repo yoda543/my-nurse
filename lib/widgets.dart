@@ -1,5 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'package:url_launcher/url_launcher.dart';
+
+import 'app_state.dart';
 import 'format.dart';
 import 'models.dart';
 import 'theme.dart';
@@ -172,6 +175,29 @@ class BookingCard extends StatelessWidget {
                   '${b.pro.name} · ${b.pro.type.label}',
                 ),
               ],
+              if (forPro && b.location != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.my_location,
+                        size: 18,
+                        color: Colors.black54,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('Position GPS partagée')),
+                      TextButton.icon(
+                        onPressed: () => launchUrl(
+                          b.location!.directionsUrl,
+                          mode: LaunchMode.externalApplication,
+                        ),
+                        icon: const Icon(Icons.directions, size: 18),
+                        label: const Text('Itinéraire'),
+                      ),
+                    ],
+                  ),
+                ),
               if (forPro && b.patient.allergies.isNotEmpty)
                 _line(
                   Icons.warning_amber_rounded,
@@ -300,6 +326,62 @@ class EmptyState extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// État de la détection de position, sous le choix de la commune.
+class LocationStatus extends StatelessWidget {
+  const LocationStatus({super.key, required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final place = app.place;
+    final (IconData icon, String text) = app.locating
+        ? (Icons.my_location, 'Localisation en cours…')
+        : app.locationError != null
+        ? (Icons.location_off_outlined, app.locationError!)
+        : place != null
+        ? (
+            Icons.my_location,
+            place.simulated
+                ? 'Position de démonstration : ${place.address}'
+                : 'Vous êtes à ${place.address}',
+          )
+        : (Icons.location_searching, 'Position non détectée');
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 16, color: brandGreen),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(color: Colors.black54, fontSize: 13),
+          ),
+        ),
+        if (!app.locating && (app.locationError != null || place == null))
+          InkWell(
+            onTap: onRetry,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                'Réessayer',
+                style: TextStyle(
+                  color: brandGreen,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'data/demo_data.dart';
+import 'location.dart';
 import 'models.dart';
 
 /// Refus d'une action pour une raison métier, avec un message à afficher.
@@ -17,12 +18,21 @@ class BusinessRuleError implements Exception {
 /// Chaque méthode correspond à une écriture contrôlée côté serveur
 /// (voir supabase/migrations) : mêmes règles, mêmes refus.
 class AppState extends ChangeNotifier {
-  AppState({bool seed = true, DateTime Function()? clock})
-    : _clock = clock ?? DateTime.now {
+  AppState({bool seed = true, DateTime Function()? clock, Locator? locator})
+    : _clock = clock ?? DateTime.now,
+      locator = locator ?? DeviceLocator(demoFallback: true) {
     if (seed) _seed();
   }
 
   final DateTime Function() _clock;
+
+  /// Donne la position du patient.
+  final Locator locator;
+
+  /// Dernier lieu détecté, et l'état de la détection en cours.
+  DetectedPlace? place;
+  bool locating = false;
+  String? locationError;
   DateTime get now => _clock();
 
   /// Numéro du soignant de démonstration déjà inscrit.
@@ -87,6 +97,32 @@ class AppState extends ChangeNotifier {
   void setCommune(String c) {
     commune = c;
     notifyListeners();
+  }
+
+  /// Détecte le lieu du patient et choisit la commune automatiquement.
+  /// Renvoie null si la position n'a pas pu être obtenue.
+  Future<DetectedPlace?> detectPlace() async {
+    if (locating) return place;
+    locating = true;
+    locationError = null;
+    notifyListeners();
+    try {
+      final p = await locator.locate();
+      place = p;
+      if (p.commune != null) commune = p.commune!;
+      if (p.commune == null) {
+        locationError =
+            'Vous semblez hors de nos communes (${communes.join(', ')}). '
+            'Choisissez la commune du soin.';
+      }
+      return p;
+    } on LocationError catch (e) {
+      locationError = e.message;
+      return null;
+    } finally {
+      locating = false;
+      notifyListeners();
+    }
   }
 
   // --------------------------------------------------------- inscription pro
@@ -309,11 +345,18 @@ class AppState extends ChangeNotifier {
     CareService service,
     Pro pro,
     DateTime at,
-    bool prescription,
-  ) {
+    bool prescription, {
+    required String commune,
+  }) {
     if (!pro.verified || !pro.prices.containsKey(service.id)) {
       throw const BusinessRuleError(
         "Ce soignant n'est pas disponible pour ce soin.",
+      );
+    }
+    if (!pro.communes.contains(commune)) {
+      throw BusinessRuleError(
+        '${pro.name} n’intervient pas à $commune. Choisissez un soignant '
+        'de cette commune.',
       );
     }
     if (at.isBefore(now.add(minNotice))) {
@@ -359,6 +402,7 @@ class AppState extends ChangeNotifier {
     DateTime? createdAt,
     Contract? contract,
     int sessionIndex = 0,
+    GeoPoint? location,
   }) {
     final b = Booking(
       id: 'R${_nextId++}',
@@ -378,6 +422,7 @@ class AppState extends ChangeNotifier {
       commissionRate: contract == null
           ? commissionRate
           : contractCommissionRate,
+      location: location,
     );
     bookings.insert(0, b);
     contract?.sessions.add(b);
@@ -394,8 +439,9 @@ class AppState extends ChangeNotifier {
     String note = '',
     Patient? patient,
     bool mine = true,
+    GeoPoint? location,
   }) {
-    _checkSlot(service, pro, scheduledAt, hasPrescription);
+    _checkSlot(service, pro, scheduledAt, hasPrescription, commune: commune);
     final b = _create(
       service: service,
       pro: pro,
@@ -406,6 +452,7 @@ class AppState extends ChangeNotifier {
       patient: patient ?? patients.first,
       mine: mine,
       note: note,
+      location: location,
     );
     notifyListeners();
     return b;
@@ -423,6 +470,7 @@ class AppState extends ChangeNotifier {
     required bool hasPrescription,
     String note = '',
     Patient? patient,
+    GeoPoint? location,
   }) {
     if (sessions < contractMinSessions || sessions > contractMaxSessions) {
       throw const BusinessRuleError(
@@ -432,7 +480,7 @@ class AppState extends ChangeNotifier {
     }
     final dates = sessionDates(firstAt, frequency, sessions);
     for (final d in dates) {
-      _checkSlot(service, pro, d, hasPrescription);
+      _checkSlot(service, pro, d, hasPrescription, commune: commune);
     }
     final c = Contract(id: 'C${_nextContract++}', frequency: frequency);
     for (var i = 0; i < dates.length; i++) {
@@ -448,6 +496,7 @@ class AppState extends ChangeNotifier {
         note: note,
         contract: c,
         sessionIndex: i,
+        location: location,
       );
     }
     notifyListeners();

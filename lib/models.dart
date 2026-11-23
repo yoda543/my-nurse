@@ -1,6 +1,8 @@
 import 'rules.dart';
+import 'location.dart';
 import 'rules.dart' as rules;
 
+export 'location.dart' show GeoPoint, DetectedPlace;
 export 'rules.dart';
 
 /// Modèles métier MyNurse (V1).
@@ -325,6 +327,7 @@ class Booking {
     this.contract,
     this.sessionIndex = 0,
     this.commissionRate = rules.commissionRate,
+    this.location,
   });
 
   final String id;
@@ -347,6 +350,9 @@ class Booking {
 
   final DateTime createdAt;
   DateTime? acceptedAt;
+
+  /// Position GPS du lieu du soin, partagée avec le soignant.
+  final GeoPoint? location;
 
   /// Suivi régulier dont cette séance fait partie.
   final Contract? contract;

@@ -28,6 +28,11 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   Patient? _patient;
   String? _error;
   bool _recurring = false;
+
+  /// Position GPS du lieu du soin, quand l'adresse vient de la localisation.
+  GeoPoint? _point;
+  bool _locating = false;
+  String? _locationNote;
   Frequency _frequency = Frequency.daily;
   int _sessions = 5;
 
@@ -36,6 +41,42 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
     super.initState();
     final t = DateTime.now().add(const Duration(days: 1));
     _when = DateTime(t.year, t.month, t.day, 9);
+    // L'adresse sort directement si la position est déjà connue.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final place = AppScope.of(context).place;
+      if (place != null && _address.text.isEmpty) _fill(place);
+    });
+  }
+
+  void _fill(DetectedPlace place) {
+    setState(() {
+      _address.text = place.address;
+      _point = place.point;
+      _locationNote = place.simulated
+          ? 'Position de démonstration : la vraie position est lue sur le '
+                'téléphone.'
+          : 'Position GPS partagée avec le soignant. Ajoutez un repère '
+                '(étage, portail).';
+    });
+  }
+
+  /// Remplit l'adresse à partir de la position du téléphone.
+  Future<void> _locate() async {
+    if (_locating) return;
+    setState(() {
+      _locating = true;
+      _locationNote = null;
+    });
+    final app = AppScope.of(context);
+    final place = await app.detectPlace();
+    if (!mounted) return;
+    setState(() => _locating = false);
+    if (place != null) {
+      _fill(place);
+    } else {
+      setState(() => _locationNote = app.locationError);
+    }
   }
 
   @override
@@ -96,6 +137,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
           hasPrescription: _prescription,
           note: _note.text.trim(),
           patient: _patient ?? app.patients.first,
+          location: _point,
         );
       } else {
         app.book(
@@ -107,6 +149,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
           hasPrescription: _prescription,
           note: _note.text.trim(),
           patient: _patient ?? app.patients.first,
+          location: _point,
         );
       }
     } on BusinessRuleError catch (e) {
@@ -150,7 +193,8 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                 ),
               ),
               Text(
-                'avec ${widget.pro.name} · ${app.commune}',
+                'avec ${widget.pro.name} · ${app.commune}'
+                '${app.place?.commune == app.commune ? ' (votre position)' : ''}',
                 style: const TextStyle(color: Colors.black54),
               ),
               const SizedBox(height: 16),
@@ -285,10 +329,35 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                 minLines: 2,
                 maxLines: 3,
                 textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(
+                onTap: () {
+                  if (_address.text.isEmpty) _locate();
+                },
+                onChanged: (v) {
+                  if (v.isEmpty) setState(() => _point = null);
+                },
+                decoration: InputDecoration(
                   labelText: 'Adresse et repères',
-                  hintText: 'Quartier, résidence, repère connu…',
+                  hintText: _locating
+                      ? 'Localisation en cours…'
+                      : 'Touchez pour utiliser votre position',
                   alignLabelWithHint: true,
+                  prefixIcon: const Icon(Icons.place_outlined),
+                  suffixIcon: _locating
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : IconButton(
+                          tooltip: 'Utiliser ma position',
+                          onPressed: _locate,
+                          icon: const Icon(Icons.my_location),
+                        ),
+                  helperText: _locationNote,
+                  helperMaxLines: 3,
                 ),
                 validator: (v) => (v == null || v.trim().length < 8)
                     ? "Indiquez l'adresse avec un repère."

@@ -64,6 +64,18 @@ Toutes les valeurs sont dans `lib/rules.dart` et appliquées aussi côté serveu
 Un paiement Mobile Money qui arrive après l'expiration du rendez-vous est crédité sur le
 solde du patient : l'argent n'est jamais perdu.
 
+## Localisation
+
+À l'ouverture, l'app lit la position du patient et choisit la commune toute seule. Quand
+il touche le champ d'adresse, l'adresse se remplit (quartier, rue, commune) ; il n'a plus
+qu'à ajouter un repère. La position GPS part avec la réservation et le soignant a un bouton
+« Itinéraire ». Si la position est refusée ou hors des communes desservies, un message
+l'explique et la saisie reste possible.
+
+L'adresse lisible vient d'OpenStreetMap (Nominatim). Son service public limite l'usage
+(1 requête par seconde, pas d'usage commercial intensif) : avant le lancement, passer à un
+Nominatim auto-hébergé ou à un service comme LocationIQ (offre gratuite).
+
 ## Pas encore fait
 
 - Branchement de l'app à Supabase (le schéma est prêt, voir plus bas).
