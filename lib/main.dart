@@ -57,6 +57,17 @@ class MyNurseApp extends StatelessWidget {
         locale: const Locale('fr', 'FR'),
         supportedLocales: const [Locale('fr', 'FR')],
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        // Sur un grand écran (démo web sur PC, tablette), l'app garde une
+        // largeur de téléphone, centrée : lignes lisibles, boutons à portée.
+        builder: (context, child) => ColoredBox(
+          color: brandSand,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: maxAppWidth),
+              child: child,
+            ),
+          ),
+        ),
         home: const _Root(),
       ),
     );

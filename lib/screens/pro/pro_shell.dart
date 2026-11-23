@@ -125,8 +125,8 @@ class _RequestsTab extends StatelessWidget {
                                     'Suivi de ${c.sessions.length} séances, '
                                     '${c.frequency.label.toLowerCase()}, du '
                                     '${dateTimeLabel(c.start)} au '
-                                    '${dateTimeLabel(c.end)}. Commission réduite '
-                                    'à ${(contractCommissionRate * 100).round()} % : '
+                                    '${dateTimeLabel(c.end)}. Commission de '
+                                    '${(contractCommissionRate * 100).round()} % : '
                                     '${fcfa(c.sessions.fold(0, (s, x) => s + x.proEarnings))} '
                                     'pour vous au total.',
                               ),

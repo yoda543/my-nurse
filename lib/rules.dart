@@ -6,12 +6,17 @@ library;
 
 // ------------------------------------------------------------------ tarifs
 
-/// Commission prélevée sur un soin ponctuel.
-const commissionRate = 0.15;
+/// Commission MyNurse prélevée sur chaque soin (10 %, décision de Jared du
+/// 23/11/2026 ; avant : 15 %). Même taux côté serveur :
+/// supabase/migrations/0007_commission_10.sql.
+const commissionRate = 0.10;
 
-/// Commission réduite sur un suivi régulier, pour que le soignant n'ait pas
-/// intérêt à continuer hors de l'app.
-const contractCommissionRate = 0.10;
+/// Commission sur une séance de suivi régulier : identique à un soin ponctuel
+/// depuis le 23/11/2026 (gardée à part si l'on veut la différencier un jour).
+const contractCommissionRate = commissionRate;
+
+/// Taux de commission en pourcentage entier, pour l'affichage (« 10 % »).
+int get commissionPercent => (commissionRate * 100).round();
 
 /// Majoration d'un soin de nuit (21 h – 6 h).
 const nightSurchargeRate = 0.5;

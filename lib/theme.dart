@@ -5,6 +5,9 @@ const brandInk = Color(0xFF0F2A2E);
 const brandSand = Color(0xFFF6F3EC);
 const brandCoral = Color(0xFFE2603F);
 
+/// Largeur maximale de l'app sur grand écran (PC, tablette).
+const maxAppWidth = 600.0;
+
 ThemeData buildTheme() {
   final scheme = ColorScheme.fromSeed(
     seedColor: brandGreen,

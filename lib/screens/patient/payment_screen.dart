@@ -20,15 +20,18 @@ class PaymentScreen extends StatefulWidget {
 
 class _PaymentScreenState extends State<PaymentScreen> {
   PaymentMethod? _choice;
-  late final _phone = TextEditingController(
-    text: AppScope.of(context).sessionPhone,
-  );
+  // Créé seulement quand le champ Mobile Money s'affiche. Avec un `late final`,
+  // un paiement par solde le créait pour la première fois dans dispose(), où
+  // `context` n'est plus utilisable : erreur « Null check operator… ».
+  TextEditingController? _phoneController;
+  TextEditingController get _phone => _phoneController ??=
+      TextEditingController(text: AppScope.of(context).sessionPhone);
   bool _busy = false;
   String? _error;
 
   @override
   void dispose() {
-    _phone.dispose();
+    _phoneController?.dispose();
     super.dispose();
   }
 

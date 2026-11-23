@@ -262,9 +262,9 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
                 subtitle: const Text('Les soins de nuit sont majorés de 50 %.'),
               ),
               _heading('Vos soins et vos prix'),
-              const Text(
+              Text(
                 'Fixez votre prix dans la fourchette recommandée par MyNurse. '
-                'Une commission de 15 % est prélevée sur chaque soin.',
+                'Une commission de $commissionPercent % est prélevée sur chaque soin.',
                 style: TextStyle(color: Colors.black54),
               ),
               const SizedBox(height: 8),

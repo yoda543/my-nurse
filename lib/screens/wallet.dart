@@ -458,7 +458,7 @@ class ProWalletTab extends StatelessWidget {
                   leading: const Icon(Icons.percent),
                   title: const Text('Commission MyNurse'),
                   subtitle: Text(
-                    '15 % sur ${done.length} soin${done.length > 1 ? 's' : ''} '
+                    '$commissionPercent % sur ${done.length} soin${done.length > 1 ? 's' : ''} '
                     'terminé${done.length > 1 ? 's' : ''}',
                   ),
                   trailing: Text(fcfa(commission)),

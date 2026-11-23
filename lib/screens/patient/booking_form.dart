@@ -383,7 +383,9 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                 maxLines: 4,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
-                  labelText: 'Précisions pour le soignant (facultatif)',
+                  // Libellé court : la version longue était coupée à 360 px.
+                  labelText: 'Précisions (facultatif)',
+                  hintText: 'Ex. : code du portail, étage, chien…',
                   alignLabelWithHint: true,
                 ),
               ),

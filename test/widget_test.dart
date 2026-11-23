@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:mynurse/app_state.dart';
 import 'package:mynurse/main.dart';
 import 'package:mynurse/models.dart';
+import 'package:mynurse/screens/patient/payment_screen.dart';
 
 final _day = DateTime(2030, 1, 10, 10);
 DateTime _now = DateTime(2030, 1, 1, 8);
@@ -30,16 +31,16 @@ void main() {
   setUp(() => _now = DateTime(2030, 1, 1, 8));
 
   group('prix', () {
-    test('majoration de nuit de 50 % et commission de 15 %', () async {
+    test('majoration de nuit de 50 % et commission de 10 %', () async {
       final app = _app();
       final day = await _book(app);
       expect(day.price, 8000);
-      expect(day.commission, 1200);
-      expect(day.proEarnings, 6800);
+      expect(day.commission, 800);
+      expect(day.proEarnings, 7200);
 
       final night = await _book(app, at: DateTime(2030, 1, 10, 22));
       expect(night.price, 12000);
-      expect(night.proEarnings, 10200);
+      expect(night.proEarnings, 10800);
     });
   });
 
@@ -330,6 +331,24 @@ void main() {
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
     expect(find.text('De quel soin avez-vous besoin ?'), findsOneWidget);
+  });
+
+  testWidgets('paiement : quitter l’écran sans Mobile Money ne plante pas', (
+    tester,
+  ) async {
+    final app = _app();
+    final b = await _book(app);
+    await app.respond(b, accept: true);
+    await tester.pumpWidget(
+      AppScope(
+        state: app,
+        child: MaterialApp(home: PaymentScreen(booking: b)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Fermer l'écran (ce que fait « Retour » après un paiement par solde).
+    await tester.pumpWidget(const SizedBox());
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('un nouveau soignant arrive sur l’inscription', (tester) async {

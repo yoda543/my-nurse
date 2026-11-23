@@ -64,7 +64,7 @@ Toutes les valeurs sont dans `lib/rules.dart` et appliquées aussi côté serveu
 
 | Règle | Valeur |
 | --- | --- |
-| Commission | 15 % par soin ; 10 % sur un suivi régulier |
+| Commission | 10 % par soin, soin ponctuel comme suivi régulier (avant le 23/11/2026 : 15 % ; 10 % en suivi) |
 | Soin de nuit (21 h – 6 h) | +50 %, seulement chez les soignants disponibles la nuit |
 | Délai de réservation | au moins 1 h avant, au plus 60 jours |
 | Réponse du soignant | 2 h (jamais après l'heure du soin), sinon la demande est annulée |
