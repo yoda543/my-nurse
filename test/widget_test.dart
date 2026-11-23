@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:mynurse/app_state.dart';
 import 'package:mynurse/main.dart';
 import 'package:mynurse/models.dart';
+import 'package:mynurse/screens/patient/payment_screen.dart';
 
 final _day = DateTime(2030, 1, 10, 10);
 DateTime _now = DateTime(2030, 1, 1, 8);
@@ -330,6 +331,24 @@ void main() {
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
     expect(find.text('De quel soin avez-vous besoin ?'), findsOneWidget);
+  });
+
+  testWidgets('paiement : quitter l’écran sans Mobile Money ne plante pas', (
+    tester,
+  ) async {
+    final app = _app();
+    final b = await _book(app);
+    await app.respond(b, accept: true);
+    await tester.pumpWidget(
+      AppScope(
+        state: app,
+        child: MaterialApp(home: PaymentScreen(booking: b)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Fermer l'écran (ce que fait « Retour » après un paiement par solde).
+    await tester.pumpWidget(const SizedBox());
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('un nouveau soignant arrive sur l’inscription', (tester) async {
