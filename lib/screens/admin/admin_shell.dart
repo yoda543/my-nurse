@@ -5,6 +5,7 @@ import '../../app_state.dart';
 import '../../format.dart';
 import '../../models.dart';
 import '../../widgets.dart';
+import '../notifications.dart';
 
 /// Back-office MyNurse : vérification des soignants, suivi de l'activité.
 class AdminShell extends StatefulWidget {
@@ -101,6 +102,7 @@ class _PendingTab extends StatelessWidget {
         Row(
           children: [
             const Expanded(child: SectionTitle('Dossiers à vérifier')),
+            const NotificationBell(),
             IconButton(
               tooltip: 'Se déconnecter',
               onPressed: app.logout,

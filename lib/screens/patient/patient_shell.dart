@@ -4,6 +4,7 @@ import '../../app_state.dart';
 import '../../models.dart';
 import '../../theme.dart';
 import '../../widgets.dart';
+import '../notifications.dart';
 import '../wallet.dart';
 import 'booking_detail.dart';
 import 'health_record.dart';
@@ -93,9 +94,16 @@ class _HomeTabState extends State<_HomeTab> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
       children: [
-        Text(
-          'Bonjour ${app.patientName.split(' ').first},',
-          style: const TextStyle(fontSize: 16, color: Colors.black54),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Bonjour ${app.patientName.split(' ').first},',
+                style: const TextStyle(fontSize: 16, color: Colors.black54),
+              ),
+            ),
+            const NotificationBell(),
+          ],
         ),
         const SizedBox(height: 2),
         const Text(

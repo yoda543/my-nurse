@@ -257,6 +257,42 @@ class Pro {
       requiredDocs(type).where((d) => !documents.contains(d)).toList();
 }
 
+/// Compte patient : le titulaire, les proches qu'il gère et son solde.
+class PatientAccount {
+  PatientAccount({required this.id, required this.phone, this.name = ''});
+
+  final String id;
+
+  /// Numéro de connexion (démo) ; vide pour un compte en ligne.
+  final String phone;
+  String name;
+  final List<Patient> patients = [];
+  final Wallet wallet = Wallet();
+}
+
+/// Notification affichée sous la cloche.
+class AppNotification {
+  AppNotification({
+    required this.id,
+    required this.recipient,
+    required this.at,
+    required this.title,
+    required this.body,
+    this.booking,
+    this.read = false,
+  });
+
+  final String id;
+
+  /// Compte destinataire : compte patient, soignant ou « admin ».
+  final String recipient;
+  final DateTime at;
+  final String title;
+  final String body;
+  final Booking? booking;
+  bool read;
+}
+
 /// Personne soignée : le titulaire du compte ou un proche qu'il gère.
 class Patient {
   Patient({
@@ -334,7 +370,7 @@ class Booking {
     required this.address,
     required this.scheduledAt,
     required this.basePrice,
-    this.mine = false,
+    this.ownerId,
     this.hasPrescription = false,
     this.note = '',
     this.status = BookingStatus.pending,
@@ -351,8 +387,9 @@ class Booking {
   final String id;
   final Patient patient;
 
-  /// Vrai si la réservation a été faite depuis le compte patient connecté.
-  final bool mine;
+  /// Compte patient qui a réservé (null pour les patients extérieurs de la
+  /// démonstration).
+  final String? ownerId;
   final CareService service;
   final Pro pro;
   final String commune;

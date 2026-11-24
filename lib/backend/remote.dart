@@ -61,6 +61,7 @@ class RemoteSnapshot {
     required this.clientBalances,
     required this.proBalances,
     required this.premiumRevenue,
+    required this.notifications,
   });
 
   final UserRole role;
@@ -76,6 +77,7 @@ class RemoteSnapshot {
   final int clientBalances;
   final int proBalances;
   final int premiumRevenue;
+  final List<AppNotification> notifications;
 }
 
 /// Accès à la base Supabase. Les règles sont appliquées par le serveur ;
@@ -123,12 +125,34 @@ class RemoteBackend {
   }
 
   // -------------------------------------------------------------- connexion
-  Future<void> sendCode(String email, {required UserRole role}) => _call(
-    () => client.auth.signInWithOtp(
-      email: email,
-      shouldCreateUser: true,
-      data: {'role': role == UserRole.pro ? 'pro' : 'patient'},
-    ),
+  /// Envoie le code. [role] null : connexion à un compte existant seulement.
+  Future<void> sendCode(String email, {UserRole? role}) async {
+    try {
+      await _call(
+        () => client.auth.signInWithOtp(
+          email: email,
+          shouldCreateUser: role != null,
+          data: role == null
+              ? null
+              : {'role': role == UserRole.pro ? 'pro' : 'patient'},
+        ),
+      );
+    } on BusinessRuleError catch (e) {
+      final m = e.message.toLowerCase();
+      if (role == null && (m.contains('signup') || m.contains('not found'))) {
+        throw const BusinessRuleError(
+          'Aucun compte avec cette adresse. Vérifiez-la ou créez un compte.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> markRead(List<String> ids) => _call(
+    () => client
+        .from('notifications')
+        .update({'read_at': DateTime.now().toUtc().toIso8601String()})
+        .inFilter('id', ids),
   );
 
   Future<void> verifyCode(String email, String code) => _call(
@@ -168,6 +192,12 @@ class RemoteBackend {
           .order('created_at', ascending: false)
           .limit(500),
       client.from('wallets').select('owner_id, balance, profiles(role)'),
+      client
+          .from('notifications')
+          .select()
+          .eq('user_id', uid)
+          .order('created_at', ascending: false)
+          .limit(100),
     ]);
 
     // Catalogue, dans l'ordre de l'app.
@@ -281,7 +311,7 @@ class RemoteBackend {
               patient:
                   patients[r['patient_id']] ??
                   Patient(id: r['patient_id'] as String, name: 'Patient'),
-              mine: r['booked_by'] == uid,
+              ownerId: r['booked_by'] as String,
               service: service,
               pro: pro,
               commune: r['commune'] as String,
@@ -364,6 +394,23 @@ class RemoteBackend {
         .where((t) => t['kind'] == 'subscription')
         .fold<int>(0, (s, t) => s - _int(t['amount']));
 
+    final bookingsById = {for (final b in bookings) b.id: b};
+    final notifications = [
+      for (final n in results[8])
+        AppNotification(
+          id: n['id'] as String,
+          recipient: switch (role) {
+            UserRole.admin => 'admin',
+            _ => uid,
+          },
+          at: _date(n['created_at']),
+          title: n['title'] as String,
+          body: n['body'] as String,
+          booking: bookingsById[n['booking_id']],
+          read: n['read_at'] != null,
+        ),
+    ];
+
     return RemoteSnapshot(
       role: role,
       fullName: profile['full_name'] as String,
@@ -376,6 +423,7 @@ class RemoteBackend {
       clientBalances: clients,
       proBalances: prosTotal,
       premiumRevenue: premium,
+      notifications: notifications,
     );
   });
 

@@ -9,7 +9,8 @@ import '../models.dart';
 class EmailLoginScreen extends StatefulWidget {
   const EmailLoginScreen({super.key, required this.role});
 
-  final UserRole role;
+  /// null : connexion à un compte existant ; sinon création de ce type.
+  final UserRole? role;
 
   @override
   State<EmailLoginScreen> createState() => _EmailLoginScreenState();
@@ -76,7 +77,11 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
           padding: const EdgeInsets.all(24),
           children: [
             Text(
-              _codeSent ? 'Entrez le code reçu' : 'Votre adresse e-mail',
+              _codeSent
+                  ? 'Entrez le code reçu'
+                  : widget.role == null
+                  ? 'Connexion'
+                  : 'Votre adresse e-mail',
               style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
@@ -85,11 +90,14 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                   ? 'Code envoyé à ${_email.text.trim()}. Pensez à regarder '
                         'dans les courriers indésirables.'
                   : switch (widget.role) {
+                      null =>
+                        'Entrez l’adresse de votre compte MyNurse. Nous vous '
+                            'envoyons un code.',
                       UserRole.pro =>
                         'Connectez-vous ou créez votre compte soignant. '
                             'Nous vous envoyons un code par e-mail.',
                       UserRole.admin => 'Accès réservé à l’équipe MyNurse.',
-                      UserRole.patient =>
+                      _ =>
                         'Nous vous envoyons un code par e-mail pour vous '
                             'connecter. Pas de mot de passe à retenir.',
                     },

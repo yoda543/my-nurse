@@ -56,15 +56,16 @@ class AppState extends ChangeNotifier {
   String? locationError;
   DateTime get now => _clock();
 
-  /// Numéro du soignant de démonstration déjà inscrit.
+  /// Comptes de démonstration (code SMS : 123456).
+  static const demoPatientPhone = '0700000000';
   static const demoProPhone = '0500000000';
+  static const demoAdminPhone = '0100000000';
 
   final List<CareService> services = [...demoServices];
   late final List<Pro> pros = remote == null ? buildDemoPros() : <Pro>[];
   final List<Booking> bookings = [];
 
   UserRole? role;
-  String patientName = 'Awa Bamba';
   String commune = communes.first;
   int _nextId = 1;
   int _nextContract = 1;
@@ -73,13 +74,23 @@ class AppState extends ChangeNotifier {
   /// Chiffre d'affaires des abonnements Pro Premium.
   int premiumRevenue = 0;
 
+  /// Comptes patients (démo : plusieurs ; en ligne : celui connecté).
+  final List<PatientAccount> accounts = [];
+
+  /// Compte patient en cours.
+  PatientAccount? account;
+  final _noAccount = PatientAccount(id: '', phone: '');
+
   /// Le titulaire du compte et les proches qu'il gère.
-  late final List<Patient> patients = remote == null
-      ? [Patient(id: 'P0', name: patientName, birthYear: 1988)]
-      : <Patient>[];
+  List<Patient> get patients => (account ?? _noAccount).patients;
 
   /// Porte-monnaie du compte patient connecté.
-  final Wallet wallet = Wallet();
+  Wallet get wallet => (account ?? _noAccount).wallet;
+  String get patientName => account?.name ?? '';
+
+  /// Notifications de tous les comptes (démo) ou du compte connecté (en ligne).
+  final List<AppNotification> notifications = [];
+  int _nextNotification = 1;
 
   /// Soignant connecté (null tant que le dossier n'est pas créé).
   Pro? currentPro;
@@ -93,6 +104,8 @@ class AppState extends ChangeNotifier {
   void login(UserRole r, {String phone = ''}) {
     role = r;
     sessionPhone = phone;
+    final byPhone = accounts.where((a) => a.phone == phone).firstOrNull;
+    if (r == UserRole.patient && byPhone != null) account = byPhone;
     expireStale();
     notifyListeners();
   }
@@ -108,6 +121,49 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Démo : connexion à un compte existant, retrouvé par son numéro.
+  void loginDemo(String phone) {
+    final patientAccount = accounts.where((a) => a.phone == phone).firstOrNull;
+    final pro = phone == demoProPhone
+        ? pros.first
+        : pros.where((p) => p.phone == phone).firstOrNull;
+    if (phone == demoAdminPhone) {
+      role = UserRole.admin;
+    } else if (patientAccount != null) {
+      account = patientAccount;
+      role = UserRole.patient;
+    } else if (pro != null) {
+      currentPro = pro;
+      role = UserRole.pro;
+    } else {
+      throw const BusinessRuleError(
+        'Aucun compte avec ce numéro. Vérifiez-le ou créez un compte.',
+      );
+    }
+    sessionPhone = phone;
+    expireStale();
+    notifyListeners();
+  }
+
+  /// Démo : création d'un compte patient ou soignant.
+  void signUpDemo(String phone, UserRole r) {
+    if (demoAccountExists(phone)) {
+      throw const BusinessRuleError(
+        'Ce numéro a déjà un compte. Connectez-vous.',
+      );
+    }
+    sessionPhone = phone;
+    if (r == UserRole.pro) {
+      currentPro = null;
+    } else {
+      final a = PatientAccount(id: 'A${accounts.length + 1}', phone: phone);
+      accounts.add(a);
+      account = a;
+    }
+    role = r;
+    notifyListeners();
+  }
+
   void logout() {
     role = null;
     sessionPhone = '';
@@ -116,20 +172,104 @@ class AppState extends ChangeNotifier {
       remote!.signOut();
       pros.clear();
       bookings.clear();
-      patients.clear();
-      wallet.replaceWith(0, const []);
+      accounts.clear();
+      notifications.clear();
+      account = null;
       fullName = '';
     }
     notifyListeners();
   }
 
+  // -------------------------------------------------------- notifications
+  String? get _me => switch (role) {
+    UserRole.patient => account?.id,
+    UserRole.pro => currentPro?.id,
+    UserRole.admin => 'admin',
+    null => null,
+  };
+
+  /// Notifications du compte connecté, de la plus récente à la plus ancienne.
+  List<AppNotification> get myNotifications {
+    final me = _me;
+    final indexed = [
+      for (var i = 0; i < notifications.length; i++)
+        if (notifications[i].recipient == me) (i, notifications[i]),
+    ];
+    // Plus récente d'abord ; à la même heure, la dernière créée d'abord.
+    indexed.sort((a, b) {
+      final c = b.$2.at.compareTo(a.$2.at);
+      return c != 0 ? c : b.$1.compareTo(a.$1);
+    });
+    return [for (final e in indexed) e.$2];
+  }
+
+  int get unreadCount => myNotifications.where((n) => !n.read).length;
+
+  Future<void> markRead(AppNotification n) async {
+    if (n.read) return;
+    if (remote != null) await remote!.markRead([n.id]);
+    n.read = true;
+    notifyListeners();
+  }
+
+  /// Démo : ce numéro a-t-il déjà un compte ?
+  bool demoAccountExists(String phone) =>
+      phone == demoAdminPhone ||
+      phone == demoProPhone ||
+      accounts.any((a) => a.phone == phone) ||
+      pros.any((p) => p.phone == phone);
+
+  Future<void> markAllRead() async {
+    final unread = myNotifications.where((n) => !n.read).toList();
+    if (unread.isEmpty) return;
+    if (remote != null) {
+      await remote!.markRead(unread.map((n) => n.id).toList());
+    }
+    for (final n in unread) {
+      n.read = true;
+    }
+    notifyListeners();
+  }
+
+  /// Démo : crée une notification (en ligne, le serveur s'en charge).
+  void _notify(
+    String? recipient,
+    String title,
+    String body, {
+    Booking? booking,
+    DateTime? at,
+  }) {
+    if (remote != null || recipient == null) return;
+    notifications.add(
+      AppNotification(
+        id: 'N${_nextNotification++}',
+        recipient: recipient,
+        at: at ?? now,
+        title: title,
+        body: body,
+        booking: booking,
+      ),
+    );
+  }
+
+  static String _money(int v) {
+    final s = v.toString();
+    final b = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) b.write(' ');
+      b.write(s[i]);
+    }
+    return '$b FCFA';
+  }
+
   // --------------------------------------------------- base en ligne
-  /// Envoie le code de connexion par e-mail.
-  Future<void> sendCode(String email, UserRole wanted) =>
+  /// Envoie le code de connexion par e-mail. [wanted] null : connexion à un
+  /// compte existant ; sinon création d'un compte de ce type.
+  Future<void> sendCode(String email, UserRole? wanted) =>
       remote!.sendCode(email, role: wanted);
 
   /// Vérifie le code puis ouvre le compte. Le rôle vient de la base.
-  Future<void> verifyCode(String email, String code, UserRole wanted) async {
+  Future<void> verifyCode(String email, String code, UserRole? wanted) async {
     await remote!.verifyCode(email, code);
     await _openSession(wanted);
   }
@@ -177,14 +317,23 @@ class AppState extends ChangeNotifier {
     pros
       ..clear()
       ..addAll(s.pros);
+    final uid = remote!.userId!;
+    if (account?.id != uid) {
+      accounts
+        ..clear()
+        ..add(account = PatientAccount(id: uid, phone: ''));
+    }
+    account!.name = s.fullName;
     patients
       ..clear()
       ..addAll(s.myPatients);
+    notifications
+      ..clear()
+      ..addAll(s.notifications);
     bookings
       ..clear()
       ..addAll(s.bookings);
     fullName = s.fullName;
-    if (s.fullName.isNotEmpty) patientName = s.fullName;
     currentPro = pros.where((p) => p.id == remote!.userId).firstOrNull;
     wallet.replaceWith(s.walletBalance, s.walletHistory);
     _remoteClientBalances = s.clientBalances;
@@ -193,12 +342,23 @@ class AppState extends ChangeNotifier {
   }
 
   /// Un nouveau patient doit d'abord donner son nom.
-  bool get needsProfile =>
-      isRemote && role == UserRole.patient && patients.isEmpty;
+  bool get needsProfile => role == UserRole.patient && patients.isEmpty;
 
   Future<void> completeProfile(String name) async {
-    await remote!.completeProfile(name);
-    await refresh();
+    if (remote != null) {
+      await remote!.completeProfile(name);
+      return refresh();
+    }
+    final a = account!;
+    a.name = name;
+    a.patients.add(Patient(id: '${a.id}-P0', name: name));
+    _notify(
+      a.id,
+      'Bienvenue sur MyNurse',
+      'Rechargez votre solde, puis réservez un soignant vérifié près de chez '
+          'vous.',
+    );
+    notifyListeners();
   }
 
   /// Exécute une action en ligne puis recharge les données.
@@ -313,6 +473,11 @@ class AppState extends ChangeNotifier {
     );
     pros.add(p);
     currentPro = p;
+    _notify(
+      'admin',
+      'Nouveau dossier à vérifier',
+      '${p.name}, ${p.type.label} · ${p.communes.join(', ')}.',
+    );
     notifyListeners();
     return p;
   }
@@ -335,6 +500,7 @@ class AppState extends ChangeNotifier {
       ..addAll(documents);
     p.rejectionReason = '';
     p.status = VerificationStatus.pending;
+    _notify('admin', 'Dossier renvoyé', '${p.name} a complété son dossier.');
     notifyListeners();
   }
 
@@ -371,6 +537,11 @@ class AppState extends ChangeNotifier {
     }
     p.premiumUntil = extendPremium(p.premiumUntil, now, premiumPeriod);
     premiumRevenue += premiumPrice;
+    _notify(
+      p.id,
+      'Pro Premium activé',
+      'Vous êtes mis en avant jusqu’au ${_shortDate(p.premiumUntil!)}.',
+    );
     notifyListeners();
   }
 
@@ -398,7 +569,18 @@ class AppState extends ChangeNotifier {
         now,
         referralBonus,
       );
+      _notify(
+        referrer.id,
+        'Parrainage : ${referralBonus.inDays} jours de Premium offerts',
+        '${p.name} est maintenant vérifié(e). Merci de faire connaître '
+            'MyNurse.',
+      );
     }
+    _notify(
+      p.id,
+      'Votre compte est vérifié',
+      'Vous apparaissez dans les recherches des patients de vos communes.',
+    );
     notifyListeners();
   }
 
@@ -407,6 +589,7 @@ class AppState extends ChangeNotifier {
     if (remote != null) return _online((r) => r.rejectPro(p.id, reason));
     p.status = VerificationStatus.rejected;
     p.rejectionReason = reason;
+    _notify(p.id, 'Dossier à compléter', reason);
     notifyListeners();
   }
 
@@ -418,7 +601,18 @@ class AppState extends ChangeNotifier {
     p.rejectionReason = reason;
     for (final b in bookings.where((b) => b.pro == p && _isOpen(b))) {
       _cancel(b, 'Soignant suspendu par MyNurse');
+      if (b.contract == null || b == b.contract!.sessions.first) {
+        _notify(
+          b.ownerId,
+          'Soin annulé',
+          '${p.name} n’est plus disponible sur MyNurse. '
+              '${b.paid ? 'Vous êtes remboursé sur votre solde. ' : ''}'
+              'Choisissez un autre soignant.',
+          booking: b,
+        );
+      }
     }
+    _notify(p.id, 'Compte suspendu', reason);
     notifyListeners();
   }
 
@@ -581,7 +775,7 @@ class AppState extends ChangeNotifier {
     final b = Booking(
       id: 'R${_nextId++}',
       patient: patient,
-      mine: mine,
+      ownerId: mine ? account?.id : null,
       service: service,
       pro: pro,
       commune: commune,
@@ -642,6 +836,13 @@ class AppState extends ChangeNotifier {
       mine: mine,
       note: note,
       location: location,
+    );
+    _notify(
+      pro.id,
+      'Nouvelle demande de soin',
+      '${service.name} pour ${b.patientName}, le ${_shortDate(scheduledAt)}. '
+          'Répondez avant ${_time(b.responseDeadline)}.',
+      booking: b,
     );
     notifyListeners();
     return b;
@@ -704,6 +905,14 @@ class AppState extends ChangeNotifier {
         location: location,
       );
     }
+    _notify(
+      pro.id,
+      'Nouveau suivi demandé',
+      '${service.name} pour ${c.sessions.first.patientName} : $sessions '
+          'séances, ${frequency.label.toLowerCase()}, à partir du '
+          '${_shortDate(firstAt)}.',
+      booking: c.sessions.first,
+    );
     notifyListeners();
     return c;
   }
@@ -735,6 +944,18 @@ class AppState extends ChangeNotifier {
       s.status = accept ? BookingStatus.accepted : BookingStatus.refused;
       if (accept) s.acceptedAt = now;
     }
+    final first = group.first;
+    _notify(
+      first.ownerId,
+      accept
+          ? '${b.pro.name} a confirmé votre soin'
+          : '${b.pro.name} n’est pas disponible',
+      accept
+          ? 'Payez ${_money(amountDue(first))} avant '
+                '${_time(first.paymentDeadline!)} pour valider le rendez-vous.'
+          : 'Choisissez un autre soignant pour ${first.service.name}.',
+      booking: first,
+    );
     notifyListeners();
   }
 
@@ -772,6 +993,14 @@ class AppState extends ChangeNotifier {
       s.paymentMethod = method;
       s.paidAt = now;
     }
+    _notify(
+      b.pro.id,
+      'Paiement reçu',
+      '${b.patientName} a payé '
+          '${b.contract == null ? b.service.name : 'le suivi (${group.length} séances)'}. '
+          'Vous pouvez vous déplacer le ${_shortDate(group.first.scheduledAt)}.',
+      booking: group.first,
+    );
     notifyListeners();
     return true;
   }
@@ -787,9 +1016,39 @@ class AppState extends ChangeNotifier {
           !now.isBefore(b.responseDeadline)) {
         _cancel(b, 'Sans réponse du soignant à temps');
         count++;
+        if (b.contract == null || b == b.contract!.sessions.first) {
+          _notify(
+            b.ownerId,
+            'Demande sans réponse',
+            '${b.pro.name} n’a pas répondu à temps. Choisissez un autre '
+                'soignant pour ${b.service.name}.',
+            booking: b,
+          );
+          _notify(
+            b.pro.id,
+            'Demande expirée',
+            '${b.service.name} pour ${b.patientName} : délai de réponse '
+                'dépassé.',
+            booking: b,
+          );
+        }
       } else if (b.awaitingPayment && !now.isBefore(b.paymentDeadline!)) {
         _cancel(b, 'Non payé à temps');
         count++;
+        if (b.contract == null || b == b.contract!.sessions.first) {
+          _notify(
+            b.ownerId,
+            'Rendez-vous annulé',
+            '${b.service.name} avec ${b.pro.name} n’a pas été payé à temps.',
+            booking: b,
+          );
+          _notify(
+            b.pro.id,
+            'Rendez-vous annulé',
+            '${b.patientName} n’a pas payé à temps : ne vous déplacez pas.',
+            booking: b,
+          );
+        }
       }
     }
     if (count > 0) notifyListeners();
@@ -812,6 +1071,12 @@ class AppState extends ChangeNotifier {
       amount,
       'Recharge ${method.label}',
       at: now,
+    );
+    _notify(
+      account?.id,
+      'Recharge confirmée',
+      '${_money(amount)} ajoutés à votre solde. Nouveau solde : '
+          '${_money(wallet.balance)}.',
     );
     notifyListeners();
   }
@@ -841,6 +1106,11 @@ class AppState extends ChangeNotifier {
     )) {
       throw ArgumentError('Solde insuffisant.');
     }
+    _notify(
+      p.id,
+      'Retrait envoyé',
+      '${_money(amount)} vers votre compte ${method.label}.',
+    );
     notifyListeners();
   }
 
@@ -882,7 +1152,9 @@ class AppState extends ChangeNotifier {
     String reason = 'Annulé par le patient',
   }) async {
     if (remote != null) return _online((r) => r.cancel(b.id));
-    for (final s in _cancellable(b)) {
+    final group = _cancellable(b);
+    var fees = 0;
+    for (final s in group) {
       final fee = s.paid
           ? lateCancellationFee(
               price: s.price,
@@ -894,6 +1166,17 @@ class AppState extends ChangeNotifier {
         s,
         fee > 0 ? '$reason moins de 2 h avant le soin' : reason,
         fee: fee,
+      );
+      fees += fee;
+    }
+    if (group.isNotEmpty) {
+      _notify(
+        b.pro.id,
+        'Soin annulé par le patient',
+        '${b.patientName} a annulé '
+            '${group.length > 1 ? 'le suivi (${group.length} séances restantes)' : '${b.service.name} du ${_shortDate(group.first.scheduledAt)}'}.'
+            '${fees > 0 ? ' Dédommagement de ${_money(fees - (fees * b.commissionRate).round())} versé sur votre solde.' : ''}',
+        booking: group.first,
       );
     }
     notifyListeners();
@@ -913,6 +1196,22 @@ class AppState extends ChangeNotifier {
       _cancel(s, 'Annulé par le soignant : $reason');
     }
     b.pro.cancellations.add(now);
+    _notify(
+      b.ownerId,
+      'Soin annulé par le soignant',
+      '${b.pro.name} : $reason. '
+          '${b.paid ? 'Vous êtes remboursé sur votre solde MyNurse. ' : ''}'
+          'Choisissez un autre soignant.',
+      booking: b,
+    );
+    if (b.pro.recentCancellations(now) == proCancellationAlertCount) {
+      _notify(
+        'admin',
+        'Alerte fiabilité',
+        '${b.pro.name} a annulé $proCancellationAlertCount soins confirmés en '
+            '${proCancellationAlertPeriod.inDays} jours.',
+      );
+    }
     notifyListeners();
   }
 
@@ -924,8 +1223,9 @@ class AppState extends ChangeNotifier {
     if (!b.paid) return;
     b.refunded = true;
     b.cancellationFee = fee;
-    if (b.mine && b.price - fee > 0) {
-      wallet.move(
+    final owner = _ownerOf(b);
+    if (owner != null && b.price - fee > 0) {
+      owner.wallet.move(
         WalletTxKind.refund,
         b.price - fee,
         'Remboursement · ${b.service.name}',
@@ -969,6 +1269,20 @@ class AppState extends ChangeNotifier {
       '${b.service.name} · ${b.patientName}',
       at: now,
     );
+    _notify(
+      b.ownerId,
+      'Compte rendu disponible',
+      '${b.pro.name} a terminé ${b.service.name} pour ${b.patientName}. '
+          'Pensez à noter le soin.',
+      booking: b,
+    );
+    _notify(
+      b.pro.id,
+      'Paiement versé',
+      '${_money(b.proEarnings)} ajoutés à votre solde pour '
+          '${b.service.name}.',
+      booking: b,
+    );
     notifyListeners();
   }
 
@@ -983,15 +1297,28 @@ class AppState extends ChangeNotifier {
     final p = b.pro;
     p.rating = (p.rating * p.ratingCount + stars) / (p.ratingCount + 1);
     p.ratingCount++;
+    _notify(
+      p.id,
+      'Nouvelle note : $stars/5',
+      review.isEmpty
+          ? '${b.service.name} pour ${b.patientName}.'
+          : '« $review »',
+      booking: b,
+    );
     notifyListeners();
   }
+
+  bool _isMine(Booking b) => b.ownerId != null && b.ownerId == account?.id;
+
+  PatientAccount? _ownerOf(Booking b) =>
+      accounts.where((a) => a.id == b.ownerId).firstOrNull;
 
   /// Soins du patient : à venir d'abord (du plus proche au plus lointain),
   /// puis l'historique (du plus récent au plus ancien).
   List<Booking> get patientBookings {
-    final open = bookings.where((b) => b.mine && _isOpen(b)).toList()
+    final open = bookings.where((b) => _isMine(b) && _isOpen(b)).toList()
       ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
-    final past = bookings.where((b) => b.mine && !_isOpen(b)).toList()
+    final past = bookings.where((b) => _isMine(b) && !_isOpen(b)).toList()
       ..sort((a, b) => b.scheduledAt.compareTo(a.scheduledAt));
     return [...open, ...past];
   }
@@ -1061,6 +1388,14 @@ class AppState extends ChangeNotifier {
     DateTime at(int days, int hour) =>
         DateTime(start.year, start.month, start.day + days, hour);
     final aya = pros.first;
+    final awa = PatientAccount(
+      id: 'A1',
+      phone: demoPatientPhone,
+      name: 'Awa Bamba',
+    );
+    awa.patients.add(Patient(id: 'P0', name: 'Awa Bamba', birthYear: 1988));
+    accounts.add(awa);
+    account = awa;
     CareService s(String id) => services.firstWhere((e) => e.id == id);
     final jean = Patient(id: 'X1', name: 'Jean Kouassi', birthYear: 1961);
     final adjoua = Patient(
@@ -1230,6 +1565,57 @@ class AppState extends ChangeNotifier {
         },
       ),
     );
+
+    // Notifications de départ.
+    final requests = bookings.where((b) => b.status == BookingStatus.pending);
+    final single = requests.firstWhere((b) => b.contract == null);
+    _notify(
+      aya.id,
+      'Paiement reçu',
+      '${confirmed.patientName} a payé ${confirmed.service.name}. Vous pouvez '
+          'vous déplacer.',
+      booking: confirmed,
+      at: start.subtract(const Duration(hours: 22)),
+    );
+    _notify(
+      aya.id,
+      'Nouveau suivi demandé',
+      'Pansement pour Marie Kouadio : 6 séances, un jour sur deux.',
+      booking: contract.sessions.first,
+      at: start.subtract(const Duration(minutes: 45)),
+    );
+    _notify(
+      aya.id,
+      'Nouvelle demande de soin',
+      '${single.service.name} pour ${single.patientName}, le '
+          '${_shortDate(single.scheduledAt)}.',
+      booking: single,
+      at: start.subtract(const Duration(minutes: 20)),
+    );
+    _notify(
+      awa.id,
+      'Recharge confirmée',
+      '25 000 FCFA ajoutés à votre solde.',
+      at: at(-5, 19),
+    );
+    _notify(
+      awa.id,
+      'Compte rendu disponible',
+      'Aya Kouamé a terminé votre pansement. Pensez à noter le soin.',
+      booking: past,
+      at: at(-3, 11),
+    );
+    _notify(
+      'admin',
+      'Nouveau dossier à vérifier',
+      'Bernadette Ouattara, Infirmier(ère) · Marcory, Plateau.',
+      at: start.subtract(const Duration(hours: 3)),
+    );
+    for (final n in notifications) {
+      // Les plus anciennes sont déjà lues, sauf le compte rendu pas encore noté.
+      n.read =
+          now.difference(n.at) > const Duration(hours: 12) && n.booking != past;
+    }
   }
 }
 

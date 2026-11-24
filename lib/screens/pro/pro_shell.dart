@@ -4,6 +4,7 @@ import '../../app_state.dart';
 import '../../format.dart';
 import '../../models.dart';
 import '../../widgets.dart';
+import '../notifications.dart';
 import '../wallet.dart';
 import 'care_log_form.dart';
 import 'pro_onboarding.dart';
@@ -79,6 +80,10 @@ class _RequestsTab extends StatelessWidget {
         Row(
           children: [
             const Expanded(child: SectionTitle('Demandes')),
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: NotificationBell(),
+            ),
             Padding(
               padding: const EdgeInsets.only(right: 20, top: 8),
               child: ActionChip(

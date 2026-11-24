@@ -61,6 +61,11 @@ void main() {
 
     // 2. L'administration voit le dossier, ouvre une pièce et le valide.
     await admin.refresh();
+    expect(admin.myNotifications.first.title, 'Nouveau dossier à vérifier');
+    expect(admin.unreadCount, 1);
+    await admin.markAllRead();
+    await admin.refresh();
+    expect(admin.unreadCount, 0);
     final dossier = admin.prosWithStatus(VerificationStatus.pending).single;
     expect(dossier.id, me.id);
     final url = await admin.remote!.documentUrl(
@@ -96,6 +101,12 @@ void main() {
 
     // 4. Le soignant voit la demande avec le nom du patient et accepte.
     await pro.refresh();
+    final titles = pro.myNotifications.map((n) => n.title).toList();
+    expect(titles.take(2), [
+      'Nouvelle demande de soin',
+      'Votre compte est vérifié',
+    ]);
+    expect(pro.myNotifications.first.booking?.id, booking.id);
     final request = pro.proRequests.single;
     expect(request.patientName, 'Patient Essai');
     await pro.respond(request, accept: true);
@@ -103,6 +114,14 @@ void main() {
 
     // 5. Le patient paie avec son solde ; Mobile Money n'est pas encore ouvert.
     await patient.refresh();
+    expect(
+      patient.myNotifications.first.title,
+      'Soignant Essai a confirmé votre soin',
+    );
+    expect(
+      patient.myNotifications.map((n) => n.title),
+      containsAll(['Bienvenue sur MyNurse', 'Recharge confirmée']),
+    );
     final toPay = patient.patientBookings.first;
     expect(toPay.awaitingPayment, isTrue);
     expect(
@@ -157,6 +176,15 @@ void main() {
     await pro.cancelByPro(accepted, 'Essai automatique');
     await patient.refresh();
     expect(patient.wallet.balance, 30000);
+    expect(patient.myNotifications.first.title, 'Soin annulé par le soignant');
+    expect(
+      patient.myNotifications.where(
+        (n) => n.title == 'Soignant Essai a confirmé votre soin',
+      ),
+      hasLength(2),
+      reason:
+          'un soin ponctuel + un suivi de 3 séances : 2 notifications, pas 4',
+    );
 
     // 10. Premium refusé sans solde ; l'administration voit les totaux.
     expect(

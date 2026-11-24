@@ -399,4 +399,97 @@ void main() {
       expect(p.referredBy, aya);
     });
   });
+
+  group('comptes et notifications', () {
+    test('se reconnecter à un compte créé, sans en recréer un', () async {
+      app.signUpDemo('0722222222', UserRole.patient);
+      expect(app.needsProfile, isTrue);
+      await app.completeProfile('Yao Kouadio');
+      final id = app.account!.id;
+      app.logout();
+      expect(
+        () => app.signUpDemo('0722222222', UserRole.patient),
+        throwsA(isA<BusinessRuleError>()),
+      );
+      app.loginDemo('0722222222');
+      expect(app.role, UserRole.patient);
+      expect(app.account!.id, id);
+      expect(app.patientName, 'Yao Kouadio');
+      // Ses données ne se mélangent pas avec celles d'Awa.
+      expect(app.patientBookings, isEmpty);
+      expect(app.wallet.balance, 0);
+    });
+
+    test('un numéro inconnu ne crée pas de compte à la connexion', () {
+      expect(
+        () => app.loginDemo('0799999999'),
+        throwsA(isA<BusinessRuleError>()),
+      );
+      expect(app.role, isNull);
+    });
+
+    test('le rôle vient du compte', () {
+      app.loginDemo(AppState.demoProPhone);
+      expect(app.role, UserRole.pro);
+      app.logout();
+      app.loginDemo(AppState.demoAdminPhone);
+      expect(app.role, UserRole.admin);
+    });
+
+    test('chaque étape notifie la bonne personne', () async {
+      app.loginDemo(AppState.demoPatientPhone);
+      final b = await book();
+      app.logout();
+      app.loginDemo(AppState.demoProPhone);
+      final forPro = app.myNotifications.first;
+      expect(forPro.title, 'Nouvelle demande de soin');
+      expect(forPro.read, isFalse);
+      await app.respond(b, accept: true);
+      app.logout();
+
+      app.loginDemo(AppState.demoPatientPhone);
+      expect(
+        app.myNotifications.first.title,
+        '${aya.name} a confirmé votre soin',
+      );
+      await app.pay(b, PaymentMethod.wallet);
+      app.logout();
+
+      app.loginDemo(AppState.demoProPhone);
+      expect(app.myNotifications.first.title, 'Paiement reçu');
+      clock.now = _day;
+      await app.submitCareLog(b, log(b));
+      app.logout();
+
+      app.loginDemo(AppState.demoPatientPhone);
+      final last = app.myNotifications.first;
+      expect(last.title, 'Compte rendu disponible');
+      expect(last.booking, b);
+      final unread = app.unreadCount;
+      await app.markRead(last);
+      expect(app.unreadCount, unread - 1);
+      await app.markAllRead();
+      expect(app.unreadCount, 0);
+    });
+
+    test('un suivi ne notifie qu’une fois', () async {
+      await app.bookContract(
+        service: service('pansement'),
+        pro: aya,
+        commune: 'Cocody',
+        address: 'Angré 8e tranche',
+        firstAt: _day,
+        frequency: Frequency.daily,
+        sessions: 4,
+        hasPrescription: false,
+      );
+      app.loginDemo(AppState.demoProPhone);
+      expect(
+        app.myNotifications.where(
+          (n) => n.title == 'Nouveau suivi demandé' && n.at == clock.now,
+        ),
+        hasLength(1),
+      );
+    });
+  });
 }

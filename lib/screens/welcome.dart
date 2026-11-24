@@ -6,18 +6,23 @@ import '../models.dart';
 import '../theme.dart';
 import 'email_login.dart';
 
+/// Ouvre l'écran de connexion adapté au mode de l'app.
+/// [role] null : connexion à un compte existant ; sinon création d'un compte.
+void openLogin(BuildContext context, UserRole? role) {
+  final remote = AppScope.of(context).isRemote;
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) =>
+          remote ? EmailLoginScreen(role: role) : LoginScreen(role: role),
+    ),
+  );
+}
+
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final remote = AppScope.of(context).isRemote;
-    void go(UserRole role) => Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) =>
-            remote ? EmailLoginScreen(role: role) : LoginScreen(role: role),
-      ),
-    );
     return Scaffold(
       backgroundColor: brandGreen,
       body: SafeArea(
@@ -65,8 +70,8 @@ class WelcomeScreen extends StatelessWidget {
                   backgroundColor: Colors.white,
                   foregroundColor: brandGreen,
                 ),
-                onPressed: () => go(UserRole.patient),
-                child: const Text('Je cherche un soignant'),
+                onPressed: () => openLogin(context, null),
+                child: const Text('Se connecter'),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
@@ -74,16 +79,10 @@ class WelcomeScreen extends StatelessWidget {
                   foregroundColor: Colors.white,
                   side: const BorderSide(color: Colors.white),
                 ),
-                onPressed: () => go(UserRole.pro),
-                child: const Text('Je suis professionnel de santé'),
-              ),
-              const SizedBox(height: 8),
-              Center(
-                child: TextButton(
-                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
-                  onPressed: () => go(UserRole.admin),
-                  child: const Text('Administration MyNurse'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AccountTypeScreen()),
                 ),
+                child: const Text('Créer un compte'),
               ),
             ],
           ),
@@ -93,12 +92,99 @@ class WelcomeScreen extends StatelessWidget {
   }
 }
 
-/// Connexion par numéro de téléphone puis code SMS.
-/// En démo, le code est toujours 123456.
+/// Création de compte : patient (ou proche) ou professionnel de santé.
+class AccountTypeScreen extends StatelessWidget {
+  const AccountTypeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget choice(IconData icon, String title, String text, UserRole role) =>
+        Card(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => openLogin(context, role),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 26,
+                    backgroundColor: const Color(0xFFD5EDE9),
+                    child: Icon(icon, color: brandGreen, size: 28),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          text,
+                          style: const TextStyle(color: Colors.black54),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+            ),
+          ),
+        );
+    return Scaffold(
+      appBar: AppBar(),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const Text(
+            'Créer un compte',
+            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Choisissez le type de compte.',
+            style: TextStyle(fontSize: 16, color: Colors.black54),
+          ),
+          const SizedBox(height: 24),
+          choice(
+            Icons.family_restroom,
+            'Je cherche un soignant',
+            'Pour moi ou pour un proche, même depuis l’étranger.',
+            UserRole.patient,
+          ),
+          const SizedBox(height: 12),
+          choice(
+            Icons.medical_services_outlined,
+            'Je suis professionnel de santé',
+            'Infirmier, aide-soignant, médecin, kiné ou sage-femme.',
+            UserRole.pro,
+          ),
+          const SizedBox(height: 24),
+          Center(
+            child: TextButton(
+              onPressed: () => openLogin(context, null),
+              child: const Text('J’ai déjà un compte : me connecter'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Démo : numéro de téléphone puis code SMS (toujours 123456).
+/// [role] null : connexion à un compte existant ; sinon création.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.role});
 
-  final UserRole role;
+  final UserRole? role;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -112,6 +198,8 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _codeSent = false;
   String? _error;
 
+  bool get _creating => widget.role != null;
+
   @override
   void dispose() {
     _phone.dispose();
@@ -120,10 +208,23 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _submit() {
+    final app = AppScope.of(context);
     setState(() => _error = null);
     if (!_codeSent) {
       if (_phone.text.length != 10) {
         setState(() => _error = 'Entrez un numéro à 10 chiffres.');
+        return;
+      }
+      final exists = app.demoAccountExists(_phone.text);
+      if (!_creating && !exists) {
+        setState(
+          () => _error =
+              'Aucun compte avec ce numéro. Vérifiez-le ou créez un compte.',
+        );
+        return;
+      }
+      if (_creating && exists) {
+        setState(() => _error = 'Ce numéro a déjà un compte. Connectez-vous.');
         return;
       }
       setState(() => _codeSent = true);
@@ -133,17 +234,34 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _error = 'Code incorrect. Vérifiez le SMS reçu.');
       return;
     }
-    final app = AppScope.of(context);
-    if (widget.role == UserRole.pro) {
-      app.loginPro(_phone.text);
-    } else {
-      app.login(widget.role, phone: _phone.text);
+    try {
+      if (_creating) {
+        app.signUpDemo(_phone.text, widget.role!);
+      } else {
+        app.loginDemo(_phone.text);
+      }
+    } on BusinessRuleError catch (e) {
+      setState(() => _error = e.message);
+      return;
     }
     Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
   @override
   Widget build(BuildContext context) {
+    final title = _codeSent
+        ? 'Entrez le code reçu'
+        : _creating
+        ? 'Votre numéro de téléphone'
+        : 'Connexion';
+    final subtitle = _codeSent
+        ? 'Code envoyé par SMS au +225 ${_phone.text}.'
+        : switch (widget.role) {
+            null => 'Entrez le numéro de votre compte MyNurse.',
+            UserRole.pro =>
+              'Votre numéro servira à vous connecter à votre espace soignant.',
+            _ => 'Votre numéro servira à vous connecter. Pas de mot de passe.',
+          };
     return Scaffold(
       appBar: AppBar(),
       body: SafeArea(
@@ -151,22 +269,12 @@ class _LoginScreenState extends State<LoginScreen> {
           padding: const EdgeInsets.all(24),
           children: [
             Text(
-              _codeSent ? 'Entrez le code reçu' : 'Votre numéro de téléphone',
+              title,
               style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
-              _codeSent
-                  ? 'Code envoyé par SMS au +225 ${_phone.text}.'
-                  : switch (widget.role) {
-                      UserRole.pro =>
-                        'Connectez-vous ou créez votre compte soignant. '
-                            'Démo : ${AppState.demoProPhone} ouvre un compte '
-                            'déjà vérifié, tout autre numéro lance '
-                            "l'inscription.",
-                      UserRole.admin => 'Accès réservé à l’équipe MyNurse.',
-                      UserRole.patient => 'Nous vous envoyons un code par SMS pour vous connecter.',
-                    },
+              subtitle,
               style: const TextStyle(fontSize: 16, color: Colors.black54),
             ),
             const SizedBox(height: 24),
@@ -219,8 +327,59 @@ class _LoginScreenState extends State<LoginScreen> {
                 }),
                 child: const Text('Modifier le numéro'),
               ),
+            if (!_creating && !_codeSent) ...[
+              const SizedBox(height: 24),
+              const _DemoAccounts(),
+            ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Démo : rappel des comptes prêts à l'emploi.
+class _DemoAccounts extends StatelessWidget {
+  const _DemoAccounts();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget line(String who, String phone) => Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Expanded(child: Text(who)),
+          SelectableText(
+            phone,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFD5EDE9),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Comptes de démonstration',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          line('Patiente (Awa Bamba)', '07 00 00 00 00'),
+          line('Infirmière (Aya Kouamé)', '05 00 00 00 00'),
+          line('Infirmière en attente', '01 01 01 01 01'),
+          line('Administration', '01 00 00 00 00'),
+          const SizedBox(height: 8),
+          const Text(
+            'Les comptes créés pendant la visite restent disponibles jusqu’au '
+            'rechargement de la page.',
+            style: TextStyle(color: Colors.black54, fontSize: 13),
+          ),
+        ],
       ),
     );
   }

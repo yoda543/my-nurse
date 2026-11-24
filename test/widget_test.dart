@@ -292,7 +292,10 @@ void main() {
       final b = await _book(app, service: 'injection', patient: mother);
       expect(b.patientName, 'Maman Bamba');
       expect(b.patient.allergies, 'Pénicilline');
-      expect(app.patientBookings.every((e) => e.mine), isTrue);
+      expect(
+        app.patientBookings.every((e) => e.ownerId == app.account!.id),
+        isTrue,
+      );
     });
 
     test('le carnet regroupe les comptes rendus de la personne', () async {
@@ -321,7 +324,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('MyNurse'), findsOneWidget);
 
-    await tester.tap(find.text('Je cherche un soignant'));
+    await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '0700000000');
     await tester.tap(find.text('Recevoir le code'));
@@ -330,6 +333,41 @@ void main() {
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
     expect(find.text('De quel soin avez-vous besoin ?'), findsOneWidget);
+    // La cloche affiche la notification non lue du compte rendu.
+    expect(find.byTooltip('1 notification non lue'), findsOneWidget);
+  });
+
+  testWidgets('connexion : un numéro inconnu est refusé avant le code', (
+    tester,
+  ) async {
+    await tester.pumpWidget(MyNurseApp(state: AppState()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Se connecter'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '0799999999');
+    await tester.tap(find.text('Recevoir le code'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Aucun compte avec ce numéro'), findsOneWidget);
+  });
+
+  testWidgets('création de compte patient puis nom', (tester) async {
+    await tester.pumpWidget(MyNurseApp(state: AppState()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Créer un compte'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Je cherche un soignant'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '0711111111');
+    await tester.tap(find.text('Recevoir le code'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '123456');
+    await tester.tap(find.text('Se connecter'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bienvenue sur MyNurse'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Kouadio Yao');
+    await tester.tap(find.text('Continuer'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bonjour Kouadio,'), findsOneWidget);
   });
 
   testWidgets('un nouveau soignant arrive sur l’inscription', (tester) async {
