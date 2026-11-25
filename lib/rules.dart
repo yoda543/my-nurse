@@ -6,12 +6,12 @@ library;
 
 // ------------------------------------------------------------------ tarifs
 
-/// Commission prélevée sur un soin ponctuel.
-const commissionRate = 0.15;
+/// Commission MyNurse : 10 % sur chaque soin, ponctuel ou suivi régulier
+/// (décision du 23/11/2026 ; même valeur côté serveur, platform_settings).
+const commissionRate = 0.10;
 
-/// Commission réduite sur un suivi régulier, pour que le soignant n'ait pas
-/// intérêt à continuer hors de l'app.
-const contractCommissionRate = 0.10;
+/// Même taux pour un suivi régulier (gardé séparé pour l'historique).
+const contractCommissionRate = commissionRate;
 
 /// Majoration d'un soin de nuit (21 h – 6 h).
 const nightSurchargeRate = 0.5;

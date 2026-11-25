@@ -1,9 +1,15 @@
+import 'dart:typed_data';
+
 import 'package:material_ui/material_ui.dart';
 
 import 'backend/remote.dart';
 import 'data/demo_data.dart';
 import 'location.dart';
 import 'models.dart';
+
+part 'state/patient_features.dart';
+part 'state/pro_features.dart';
+part 'state/admin_features.dart';
 
 /// Le paiement Mobile Money attend le compte marchand chez l'agrégateur.
 const _mobileMoneySoon =
@@ -95,6 +101,88 @@ class AppState extends ChangeNotifier {
   /// Soignant connecté (null tant que le dossier n'est pas créé).
   Pro? currentPro;
 
+  // ------------------------------------------- famille, carnet, services
+  /// Proches d'autres comptes que le compte connecté aide (base en ligne).
+  final List<Patient> _remoteShared = [];
+
+  /// Pharmacies connues, toutes communes.
+  final List<Pharmacy> pharmacies = [];
+
+  /// Réclamations envoyées par le compte connecté.
+  final List<Complaint> complaints = [];
+
+  /// Incidents signalés par le soignant connecté.
+  final List<Incident> incidents = [];
+
+  // ------------------------------------------------------- administration
+  /// Équipe MyNurse (démo : comptes de démonstration ; en ligne : le membre
+  /// connecté).
+  final List<StaffMember> staff = [];
+
+  /// Membre de l'équipe connecté.
+  StaffMember? adminMe;
+
+  /// Journal d'activité de l'administration (démo ; en ligne : audit.events).
+  final List<AdminLogEntry> adminLog = [];
+
+  /// Messages envoyés par l'équipe.
+  final List<Broadcast> broadcasts = [];
+
+  /// Accès d'urgence en cours : patient → fin de l'accès.
+  final Map<String, DateTime> _breakGlass = {};
+
+  /// Taux de commission fixé par l'équipe pour les nouveaux soins (démo).
+  double? commissionOverride;
+
+  /// En ligne : comptages fournis par le serveur (sans données nominatives).
+  ({int patients})? _remoteAdminCounts;
+
+  /// Démo : accès au carnet retirés par le titulaire (id de réservation).
+  final Set<String> _revokedAccess = {};
+
+  /// En ligne : accès au carnet en cours, par patient.
+  final Map<String, List<RecordAccess>> _remoteAccess = {};
+
+  /// En ligne : false tant que la base n'a pas les tables famille / carnet
+  /// (migrations 0009 à 0011). Les écrans concernés l'expliquent.
+  bool familyBackendReady = true;
+  int _nextMember = 1;
+  int _nextDoc = 1;
+  int _nextComplaint = 1;
+
+  // ------------------------------------------------ connexion instable
+  /// Dernière synchronisation réussie avec le serveur.
+  DateTime? lastSync;
+
+  /// La dernière tentative de joindre le serveur a échoué : on affiche les
+  /// données gardées en mémoire et on réessaie.
+  bool offline = false;
+
+  /// Note un échec réseau (pas une règle métier refusée).
+  void noteNetworkFailure() {
+    if (offline) return;
+    offline = true;
+    notifyListeners();
+  }
+
+  /// Prévient les écrans (utilisé par les extensions de cet état).
+  void _changed() => notifyListeners();
+
+  void _noteSynced() {
+    lastSync = now;
+    offline = false;
+  }
+
+  /// Réessaie de joindre le serveur. Renvoie true si c'est revenu.
+  Future<bool> retrySync() async {
+    try {
+      await refresh();
+      return !offline;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Numéro utilisé pour se connecter.
   String sessionPhone = '';
 
@@ -104,6 +192,10 @@ class AppState extends ChangeNotifier {
   void login(UserRole r, {String phone = ''}) {
     role = r;
     sessionPhone = phone;
+    if (r == UserRole.admin) {
+      adminMe =
+          staff.where((m) => m.phone == phone).firstOrNull ?? staff.firstOrNull;
+    }
     final byPhone = accounts.where((a) => a.phone == phone).firstOrNull;
     if (r == UserRole.patient && byPhone != null) account = byPhone;
     expireStale();
@@ -127,8 +219,10 @@ class AppState extends ChangeNotifier {
     final pro = phone == demoProPhone
         ? pros.first
         : pros.where((p) => p.phone == phone).firstOrNull;
-    if (phone == demoAdminPhone) {
+    final member = staff.where((m) => m.phone == phone).firstOrNull;
+    if (member != null) {
       role = UserRole.admin;
+      adminMe = member;
     } else if (patientAccount != null) {
       account = patientAccount;
       role = UserRole.patient;
@@ -214,7 +308,7 @@ class AppState extends ChangeNotifier {
 
   /// Démo : ce numéro a-t-il déjà un compte ?
   bool demoAccountExists(String phone) =>
-      phone == demoAdminPhone ||
+      staff.any((m) => m.phone == phone) ||
       phone == demoProPhone ||
       accounts.any((a) => a.phone == phone) ||
       pros.any((p) => p.phone == phone);
@@ -306,7 +400,15 @@ class AppState extends ChangeNotifier {
   Future<void> refresh() async {
     final r = remote;
     if (r == null || !r.signedIn || role == null) return;
-    _apply(await r.load());
+    try {
+      _apply(await r.load());
+      _noteSynced();
+    } on BusinessRuleError {
+      rethrow;
+    } catch (_) {
+      noteNetworkFailure();
+      rethrow;
+    }
     notifyListeners();
   }
 
@@ -336,6 +438,37 @@ class AppState extends ChangeNotifier {
     fullName = s.fullName;
     currentPro = pros.where((p) => p.id == remote!.userId).firstOrNull;
     wallet.replaceWith(s.walletBalance, s.walletHistory);
+    _remoteShared
+      ..clear()
+      ..addAll(s.sharedPatients);
+    pharmacies
+      ..clear()
+      ..addAll(s.pharmacies);
+    complaints
+      ..clear()
+      ..addAll(s.complaints);
+    _remoteAccess
+      ..clear()
+      ..addAll(s.recordAccess);
+    familyBackendReady = s.hasFamilyTables;
+    if (s.role == UserRole.admin) {
+      staff
+        ..clear()
+        ..add(
+          adminMe = StaffMember(
+            id: uid,
+            name: s.fullName.isEmpty ? 'Équipe MyNurse' : s.fullName,
+            phone: '',
+            permissions: {...s.adminPermissions},
+          ),
+        );
+      _remoteAdminCounts = s.adminPatientCount == null
+          ? null
+          : (patients: s.adminPatientCount!);
+    }
+    incidents
+      ..clear()
+      ..addAll(s.incidents);
     _remoteClientBalances = s.clientBalances;
     _remoteProBalances = s.proBalances;
     premiumRevenue = s.premiumRevenue;
@@ -363,7 +496,14 @@ class AppState extends ChangeNotifier {
 
   /// Exécute une action en ligne puis recharge les données.
   Future<void> _online(Future<void> Function(RemoteBackend r) action) async {
-    await action(remote!);
+    try {
+      await action(remote!);
+    } on BusinessRuleError {
+      rethrow;
+    } catch (_) {
+      noteNetworkFailure();
+      rethrow;
+    }
     await refresh();
   }
 
@@ -403,7 +543,9 @@ class AppState extends ChangeNotifier {
   Pro? findReferrer(String code) {
     final c = code.trim().toUpperCase();
     if (c.isEmpty) return null;
-    return pros.where((p) => p.verified && p.referralCode == c).firstOrNull;
+    return pros
+        .where((p) => p.activeAt(now) && p.referralCode == c)
+        .firstOrNull;
   }
 
   Future<Pro> registerPro({
@@ -468,7 +610,9 @@ class AppState extends ChangeNotifier {
       orderNumber: orderNumber,
       nightAvailable: nightAvailable,
       documents: documents,
-      status: VerificationStatus.pending,
+      status: requiredDocs(type).every(documents.contains)
+          ? VerificationStatus.pending
+          : VerificationStatus.incomplete,
       referredBy: referrer,
     );
     pros.add(p);
@@ -521,7 +665,7 @@ class AppState extends ChangeNotifier {
   // ------------------------------------------------------------- Premium
   /// Abonnement Pro Premium, payé avec le solde du soignant.
   Future<void> subscribePremium(Pro p) async {
-    if (!p.verified) {
+    if (!p.activeAt(now)) {
       throw const BusinessRuleError('Réservé aux soignants vérifiés.');
     }
     if (remote != null) return _online((r) => r.subscribePremium());
@@ -550,14 +694,25 @@ class AppState extends ChangeNotifier {
       pros.where((p) => p.status == s).toList();
 
   Future<void> verifyPro(Pro p) async {
-    if (p.status != VerificationStatus.pending &&
-        p.status != VerificationStatus.suspended) {
+    if (!const [
+      VerificationStatus.pending,
+      VerificationStatus.underReview,
+      VerificationStatus.suspended,
+      VerificationStatus.expired,
+    ].contains(p.status)) {
       return;
+    }
+    _checkAdmin(AdminPermission.verifyPros);
+    if (p.expiredDocs(now).isNotEmpty) {
+      throw const BusinessRuleError(
+        'Une pièce obligatoire est expirée : demandez la nouvelle version.',
+      );
     }
     if (p.missingDocs.isNotEmpty) {
       throw StateError('Dossier incomplet.');
     }
     if (remote != null) return _online((r) => r.verifyPro(p.id));
+    _adminLog('Soignant validé', p.name, details: p.type.label);
     p.status = VerificationStatus.verified;
     p.rejectionReason = '';
     // Parrainage : un mois Premium offert au parrain, une seule fois.
@@ -585,8 +740,16 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> rejectPro(Pro p, String reason) async {
-    if (p.status != VerificationStatus.pending) return;
+    if (!const [
+      VerificationStatus.pending,
+      VerificationStatus.underReview,
+      VerificationStatus.incomplete,
+    ].contains(p.status)) {
+      return;
+    }
+    _checkAdmin(AdminPermission.verifyPros);
     if (remote != null) return _online((r) => r.rejectPro(p.id, reason));
+    _adminLog('Dossier refusé', p.name, details: reason);
     p.status = VerificationStatus.rejected;
     p.rejectionReason = reason;
     _notify(p.id, 'Dossier à compléter', reason);
@@ -596,14 +759,16 @@ class AppState extends ChangeNotifier {
   /// Suspend un pro : ses soins à venir sont annulés et remboursés en totalité.
   Future<void> suspendPro(Pro p, String reason) async {
     if (p.status != VerificationStatus.verified) return;
+    _checkAdmin(AdminPermission.verifyPros);
     if (remote != null) return _online((r) => r.suspendPro(p.id, reason));
+    _adminLog('Soignant suspendu', p.name, details: reason);
     p.status = VerificationStatus.suspended;
     p.rejectionReason = reason;
     for (final b in bookings.where((b) => b.pro == p && _isOpen(b))) {
       _cancel(b, 'Soignant suspendu par MyNurse');
       if (b.contract == null || b == b.contract!.sessions.first) {
-        _notify(
-          b.ownerId,
+        _notifyFamily(
+          b,
           'Soin annulé',
           '${p.name} n’est plus disponible sur MyNurse. '
               '${b.paid ? 'Vous êtes remboursé sur votre solde. ' : ''}'
@@ -622,6 +787,7 @@ class AppState extends ChangeNotifier {
     required String relation,
     String allergies = '',
     int? birthYear,
+    String commune = '',
   }) async {
     if (remote != null) {
       final id = await remote!.addPatient(
@@ -629,6 +795,7 @@ class AppState extends ChangeNotifier {
         relation: relation,
         allergies: allergies,
         birthYear: birthYear,
+        commune: commune,
       );
       await refresh();
       return patients.firstWhere((p) => p.id == id);
@@ -639,6 +806,8 @@ class AppState extends ChangeNotifier {
       relation: relation,
       allergies: allergies,
       birthYear: birthYear,
+      commune: commune,
+      ownerName: patientName,
     );
     patients.add(p);
     notifyListeners();
@@ -650,7 +819,15 @@ class AppState extends ChangeNotifier {
     required String allergies,
     required String history,
     required String treatments,
+    String? bloodGroup,
+    String? emergencyContact,
   }) async {
+    if (!can(p, FamilyPermission.manageRecords)) {
+      throw BusinessRuleError(
+        'Seul ${p.ownerName.isEmpty ? 'le titulaire' : p.ownerName} peut '
+        'modifier ce carnet. Demandez-lui le droit « Modifier le carnet ».',
+      );
+    }
     if (remote != null) {
       return _online(
         (r) => r.updatePatient(
@@ -658,12 +835,17 @@ class AppState extends ChangeNotifier {
           allergies: allergies,
           history: history,
           treatments: treatments,
+          bloodGroup: bloodGroup,
+          emergencyContact: emergencyContact,
+          owner: isOwner(p),
         ),
       );
     }
     p.allergies = allergies;
     p.history = history;
     p.treatments = treatments;
+    if (bloodGroup != null) p.bloodGroup = bloodGroup;
+    if (emergencyContact != null) p.emergencyContact = emergencyContact;
     notifyListeners();
   }
 
@@ -679,7 +861,7 @@ class AppState extends ChangeNotifier {
     final list = pros
         .where(
           (p) =>
-              p.verified &&
+              p.activeAt(now) &&
               p.prices.containsKey(s.id) &&
               p.communes.contains(commune),
         )
@@ -716,7 +898,7 @@ class AppState extends ChangeNotifier {
     bool prescription, {
     required String commune,
   }) {
-    if (!pro.verified || !pro.prices.containsKey(service.id)) {
+    if (!pro.activeAt(now) || !pro.prices.containsKey(service.id)) {
       throw const BusinessRuleError(
         "Ce soignant n'est pas disponible pour ce soin.",
       );
@@ -749,6 +931,7 @@ class AppState extends ChangeNotifier {
       );
     }
     final end = at.add(Duration(minutes: service.durationMinutes));
+    _checkAvailability(pro, at, end);
     if (conflictFor(pro, at, end) != null) {
       throw BusinessRuleError(
         '${pro.name} a déjà un soin à cette heure. Choisissez un autre '
@@ -787,9 +970,9 @@ class AppState extends ChangeNotifier {
       createdAt: createdAt ?? now,
       contract: contract,
       sessionIndex: sessionIndex,
-      commissionRate: contract == null
-          ? commissionRate
-          : contractCommissionRate,
+      commissionRate:
+          commissionOverride ??
+          (contract == null ? commissionRate : contractCommissionRate),
       location: location,
     );
     bookings.insert(0, b);
@@ -809,6 +992,7 @@ class AppState extends ChangeNotifier {
     bool mine = true,
     GeoPoint? location,
   }) async {
+    _checkCanBook(patient ?? patients.first);
     _checkSlot(service, pro, scheduledAt, hasPrescription, commune: commune);
     if (remote != null) {
       final id = await remote!.book(
@@ -868,6 +1052,7 @@ class AppState extends ChangeNotifier {
         'séances.',
       );
     }
+    _checkCanBook(patient ?? patients.first);
     final dates = sessionDates(firstAt, frequency, sessions);
     for (final d in dates) {
       _checkSlot(service, pro, d, hasPrescription, commune: commune);
@@ -919,7 +1104,17 @@ class AppState extends ChangeNotifier {
 
   /// Réponse du soignant. Pour un suivi, la réponse vaut pour toutes les
   /// séances.
-  Future<void> respond(Booking b, {required bool accept}) async {
+  Future<void> respond(
+    Booking b, {
+    required bool accept,
+    String reason = '',
+  }) async {
+    if (!b.pro.activeAt(now)) {
+      throw const BusinessRuleError(
+        'Votre compte n’est pas vérifié ou une pièce a expiré : vous ne '
+        'pouvez pas accepter de soin.',
+      );
+    }
     expireStale();
     final group =
         b.contract?.sessions
@@ -939,21 +1134,25 @@ class AppState extends ChangeNotifier {
         }
       }
     }
-    if (remote != null) return _online((r) => r.respond(b.id, accept));
+    if (remote != null) {
+      return _online((r) => r.respond(b.id, accept, reason: reason));
+    }
     for (final s in group) {
       s.status = accept ? BookingStatus.accepted : BookingStatus.refused;
       if (accept) s.acceptedAt = now;
+      if (!accept) s.refusalReason = reason.trim();
     }
     final first = group.first;
-    _notify(
-      first.ownerId,
+    _notifyFamily(
+      first,
       accept
           ? '${b.pro.name} a confirmé votre soin'
           : '${b.pro.name} n’est pas disponible',
       accept
           ? 'Payez ${_money(amountDue(first))} avant '
                 '${_time(first.paymentDeadline!)} pour valider le rendez-vous.'
-          : 'Choisissez un autre soignant pour ${first.service.name}.',
+          : '${reason.trim().isEmpty ? '' : 'Motif : ${reason.trim()}. '}'
+                'Choisissez un autre soignant pour ${first.service.name}.',
       booking: first,
     );
     notifyListeners();
@@ -968,6 +1167,11 @@ class AppState extends ChangeNotifier {
   Future<bool> pay(Booking b, PaymentMethod method) async {
     expireStale();
     if (!b.awaitingPayment) return false;
+    if (!_isMine(b)) {
+      throw const BusinessRuleError(
+        'Ce soin a été réservé par un autre proche : c’est lui qui le paie.',
+      );
+    }
     final group = b.contract?.awaitingPayment.toList() ?? [b];
     final total = group.fold(0, (s, x) => s + x.price);
     if (remote != null) {
@@ -1017,8 +1221,8 @@ class AppState extends ChangeNotifier {
         _cancel(b, 'Sans réponse du soignant à temps');
         count++;
         if (b.contract == null || b == b.contract!.sessions.first) {
-          _notify(
-            b.ownerId,
+          _notifyFamily(
+            b,
             'Demande sans réponse',
             '${b.pro.name} n’a pas répondu à temps. Choisissez un autre '
                 'soignant pour ${b.service.name}.',
@@ -1036,8 +1240,8 @@ class AppState extends ChangeNotifier {
         _cancel(b, 'Non payé à temps');
         count++;
         if (b.contract == null || b == b.contract!.sessions.first) {
-          _notify(
-            b.ownerId,
+          _notifyFamily(
+            b,
             'Rendez-vous annulé',
             '${b.service.name} avec ${b.pro.name} n’a pas été payé à temps.',
             booking: b,
@@ -1196,8 +1400,8 @@ class AppState extends ChangeNotifier {
       _cancel(s, 'Annulé par le soignant : $reason');
     }
     b.pro.cancellations.add(now);
-    _notify(
-      b.ownerId,
+    _notifyFamily(
+      b,
       'Soin annulé par le soignant',
       '${b.pro.name} : $reason. '
           '${b.paid ? 'Vous êtes remboursé sur votre solde MyNurse. ' : ''}'
@@ -1269,8 +1473,8 @@ class AppState extends ChangeNotifier {
       '${b.service.name} · ${b.patientName}',
       at: now,
     );
-    _notify(
-      b.ownerId,
+    _notifyFamily(
+      b,
       'Compte rendu disponible',
       '${b.pro.name} a terminé ${b.service.name} pour ${b.patientName}. '
           'Pensez à noter le soin.',
@@ -1297,6 +1501,16 @@ class AppState extends ChangeNotifier {
     final p = b.pro;
     p.rating = (p.rating * p.ratingCount + stars) / (p.ratingCount + 1);
     p.ratingCount++;
+    p.reviews.insert(
+      0,
+      ProReview(
+        rating: stars,
+        comment: review,
+        at: now,
+        serviceName: b.service.name,
+        author: _shortName(patientName),
+      ),
+    );
     _notify(
       p.id,
       'Nouvelle note : $stars/5',
@@ -1315,13 +1529,26 @@ class AppState extends ChangeNotifier {
 
   /// Soins du patient : à venir d'abord (du plus proche au plus lointain),
   /// puis l'historique (du plus récent au plus ancien).
+  ///
+  /// Comprend les soins des proches que le compte suit (réservés par lui ou
+  /// par un autre membre de la famille).
   List<Booking> get patientBookings {
-    final open = bookings.where((b) => _isMine(b) && _isOpen(b)).toList()
+    final visible = bookings.where(_visibleToPatientSide);
+    final open = visible.where(_isOpen).toList()
       ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
-    final past = bookings.where((b) => _isMine(b) && !_isOpen(b)).toList()
+    final past = visible.where((b) => !_isOpen(b)).toList()
       ..sort((a, b) => b.scheduledAt.compareTo(a.scheduledAt));
     return [...open, ...past];
   }
+
+  bool _visibleToPatientSide(Booking b) =>
+      _isMine(b) ||
+      (familyPatients.contains(b.patient) &&
+          (can(b.patient, FamilyPermission.viewReports) ||
+              can(b.patient, FamilyPermission.bookCare)));
+
+  /// Ce soin a-t-il été réservé par le compte connecté ?
+  bool bookedByMe(Booking b) => _isMine(b);
 
   List<Booking> proBookings(BookingStatus status) =>
       bookings.where((b) => b.pro == currentPro && b.status == status).toList();
@@ -1385,6 +1612,37 @@ class AppState extends ChangeNotifier {
 
   void _seed() {
     final start = now;
+    staff.addAll([
+      StaffMember(
+        id: 'adm1',
+        name: 'Admin principal',
+        phone: AppState.demoAdminPhone,
+        permissions: {
+          for (final p in AdminPermission.values)
+            if (p != AdminPermission.medicalBreakGlass) p,
+        },
+      ),
+      StaffMember(
+        id: 'adm2',
+        name: 'Agent support',
+        phone: '0100000002',
+        permissions: {
+          AdminPermission.support,
+          AdminPermission.manageBookings,
+          AdminPermission.moderate,
+        },
+      ),
+      StaffMember(
+        id: 'adm3',
+        name: 'Dr Koné, médecin coordinateur',
+        phone: '0100000003',
+        permissions: {
+          AdminPermission.support,
+          AdminPermission.medicalBreakGlass,
+          AdminPermission.auditRead,
+        },
+      ),
+    ]);
     DateTime at(int days, int hour) =>
         DateTime(start.year, start.month, start.day + days, hour);
     final aya = pros.first;
@@ -1396,6 +1654,86 @@ class AppState extends ChangeNotifier {
     awa.patients.add(Patient(id: 'P0', name: 'Awa Bamba', birthYear: 1988));
     accounts.add(awa);
     account = awa;
+
+    // Famille : Awa vit à l'étranger et organise les soins de sa mère à
+    // Cocody. Son frère Koffi, à Abidjan, suit les soins de leur mère et
+    // lui a confié l'accès au dossier de leur père.
+    final mariam = Patient(
+      id: 'P1',
+      name: 'Mariam Bamba',
+      relation: 'Mère',
+      birthYear: 1956,
+      allergies: 'Pénicilline',
+      history: 'Hypertension, diabète de type 2',
+      treatments: 'Metformine 500 mg matin et soir ; Amlodipine 5 mg le matin',
+      bloodGroup: 'O+',
+      emergencyContact: 'Koffi Bamba (fils) · 0711223344',
+      commune: 'Cocody',
+      ownerName: 'Awa Bamba',
+    );
+    awa.patients.add(mariam);
+    final koffi = PatientAccount(
+      id: 'A2',
+      phone: '0711223344',
+      name: 'Koffi Bamba',
+    );
+    final yao = Patient(
+      id: 'P2',
+      name: 'Yao Bamba',
+      relation: 'Père',
+      birthYear: 1950,
+      history: 'Opéré de la prostate en 2024',
+      treatments: 'Tamsulosine 0,4 mg le soir',
+      commune: 'Bingerville',
+      ownerName: 'Koffi Bamba',
+    );
+    koffi.patients
+      ..add(Patient(id: 'P3', name: 'Koffi Bamba', birthYear: 1984))
+      ..add(yao);
+    accounts.add(koffi);
+    mariam.members.add(
+      FamilyMember(
+        id: 'M${_nextMember++}',
+        name: 'Koffi Bamba',
+        contact: '0711223344',
+        relation: 'Fils',
+        permissions: {
+          FamilyPermission.viewReports,
+          FamilyPermission.viewRecords,
+        },
+        addedAt: start.subtract(const Duration(days: 20)),
+        accountId: koffi.id,
+      ),
+    );
+    yao.members.add(
+      FamilyMember(
+        id: 'M${_nextMember++}',
+        name: 'Awa Bamba',
+        contact: demoPatientPhone,
+        relation: 'Fille',
+        permissions: {
+          FamilyPermission.viewReports,
+          FamilyPermission.bookCare,
+          FamilyPermission.viewRecords,
+        },
+        addedAt: start.subtract(const Duration(days: 15)),
+        accountId: awa.id,
+      ),
+    );
+    mariam.documents.add(
+      MedicalDocument(
+        id: 'D${_nextDoc++}',
+        kind: MedicalDocKind.prescription,
+        title: 'Ordonnance du Dr Koné (diabète)',
+        addedAt: start.subtract(const Duration(days: 6)),
+        addedBy: 'Awa Bamba',
+        fileName: 'ordonnance-koné.pdf',
+        bytes: Uint8List.fromList('%PDF-1.4 démo'.codeUnits),
+        documentDate: start.subtract(const Duration(days: 7)),
+      ),
+    );
+    pharmacies.addAll(buildDemoPharmacies(start));
+    addDemoReviews(pros, start);
     CareService s(String id) => services.firstWhere((e) => e.id == id);
     final jean = Patient(id: 'X1', name: 'Jean Kouassi', birthYear: 1961);
     final adjoua = Patient(
@@ -1527,6 +1865,32 @@ class AppState extends ChangeNotifier {
       '${past.service.name} · ${past.patientName}',
       at: at(-3, 11),
     );
+    aya.documentExpiry[DocType.rcPro] = start.add(const Duration(days: 20));
+    aya.documentExpiry[DocType.cni] = DateTime(start.year + 4, 6, 30);
+    past.vitals.addAll([
+      VitalSign(
+        kind: VitalKind.bloodPressure,
+        value: 130,
+        value2: 80,
+        at: at(-3, 10),
+        by: aya.name,
+        booking: past,
+      ),
+      VitalSign(
+        kind: VitalKind.temperature,
+        value: 37.1,
+        at: at(-3, 10),
+        by: aya.name,
+        booking: past,
+      ),
+      VitalSign(
+        kind: VitalKind.heartRate,
+        value: 76,
+        at: at(-3, 10),
+        by: aya.name,
+        booking: past,
+      ),
+    ]);
     past.careLog = CareLog(
       arrivedAt: at(-3, 10),
       leftAt: at(-3, 10).add(const Duration(minutes: 35)),
@@ -1535,6 +1899,31 @@ class AppState extends ChangeNotifier {
       temperature: '37,1',
       pulse: '76',
       observations: 'Plaie propre, cicatrisation normale. Prochain pansement dans 2 jours.',
+    );
+
+    // Demain : pansement de Mariam avec Ibrahim, réservé et payé par Awa.
+    final ibrahim = pros.firstWhere((p) => p.id == 'pro2');
+    final visit = _create(
+      service: s('pansement'),
+      pro: ibrahim,
+      commune: 'Cocody',
+      address: 'Cocody Angré 7e tranche, villa 24, portail bleu',
+      scheduledAt: at(1, 15),
+      hasPrescription: false,
+      note: 'Plaie au pied (diabète). Mon frère Koffi sera sur place.',
+      patient: mariam,
+      mine: true,
+      createdAt: start.subtract(const Duration(hours: 5)),
+    );
+    visit.status = BookingStatus.accepted;
+    visit.acceptedAt = start.subtract(const Duration(hours: 4));
+    visit.paymentMethod = PaymentMethod.wallet;
+    visit.paidAt = start.subtract(const Duration(hours: 4));
+    wallet.move(
+      WalletTxKind.payment,
+      -visit.price,
+      '${visit.service.name} · ${ibrahim.name}',
+      at: start.subtract(const Duration(hours: 4)),
     );
 
     // Un soignant Premium dans la démo.
@@ -1565,6 +1954,45 @@ class AppState extends ChangeNotifier {
         },
       ),
     );
+
+    // Une réclamation et un incident à traiter, et un peu d'historique.
+    complaints.add(
+      Complaint(
+        id: 'RC${_nextComplaint++}',
+        category: ComplaintCategory.delay,
+        description:
+            'L’infirmière est arrivée avec 40 minutes de retard '
+            'sans prévenir.',
+        createdAt: start.subtract(const Duration(hours: 20)),
+        booking: past,
+      ),
+    );
+    incidents.add(
+      Incident(
+        id: 'I1',
+        category: IncidentCategory.equipment,
+        description:
+            'Plus de compresses stériles chez le grossiste de '
+            'Cocody : prévoir un stock.',
+        at: start.subtract(const Duration(days: 2)),
+      ),
+    );
+    adminLog.addAll([
+      AdminLogEntry(
+        at: start.subtract(const Duration(days: 1, hours: 2)),
+        actor: 'Admin principal',
+        action: 'Soignant validé',
+        target: 'Dr Serge Aka',
+        details: 'Médecin',
+      ),
+      AdminLogEntry(
+        at: start.subtract(const Duration(days: 3)),
+        actor: 'Agent support',
+        action: 'Réclamation : traitée',
+        target: 'Paiement ou remboursement',
+        details: 'Double débit annulé',
+      ),
+    ]);
 
     // Notifications de départ.
     final requests = bookings.where((b) => b.status == BookingStatus.pending);

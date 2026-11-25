@@ -36,6 +36,9 @@ class NotificationsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final list = app.myNotifications;
+    final reminders = app.role == UserRole.patient
+        ? app.reminders
+        : const <CareReminder>[];
     return Scaffold(
       appBar: AppBar(
         title: const Text('Notifications'),
@@ -47,18 +50,69 @@ class NotificationsScreen extends StatelessWidget {
             ),
         ],
       ),
-      body: list.isEmpty
+      body: list.isEmpty && reminders.isEmpty
           ? const EmptyState(
               icon: Icons.notifications_none,
               text:
                   'Aucune notification pour le moment. Vous serez prévenu à '
                   'chaque étape de vos soins.',
             )
-          : ListView.separated(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: list.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (context, i) => _NotificationTile(n: list[i]),
+          : ContentWidth(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: [
+                  if (reminders.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: Text(
+                        'Rappels',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    for (final r in reminders)
+                      ListTile(
+                        leading: Icon(
+                          r.urgent
+                              ? Icons.priority_high_rounded
+                              : Icons.alarm_outlined,
+                          color: r.urgent
+                              ? const Color(0xFF8A5A00)
+                              : const Color(0xFF0B7A6E),
+                        ),
+                        title: Text(
+                          r.title,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(r.body),
+                        onTap: r.booking == null
+                            ? null
+                            : () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      BookingDetailScreen(booking: r.booking!),
+                                ),
+                              ),
+                      ),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Text(
+                        'Notifications',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                  for (var i = 0; i < list.length; i++) ...[
+                    if (i > 0) const Divider(height: 1),
+                    _NotificationTile(n: list[i]),
+                  ],
+                ],
+              ),
             ),
     );
   }

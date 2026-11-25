@@ -372,7 +372,9 @@ class _DemoAccounts extends StatelessWidget {
           line('Patiente (Awa Bamba)', '07 00 00 00 00'),
           line('Infirmière (Aya Kouamé)', '05 00 00 00 00'),
           line('Infirmière en attente', '01 01 01 01 01'),
-          line('Administration', '01 00 00 00 00'),
+          line('Administration (tous droits)', '01 00 00 00 00'),
+          line('Agent support', '01 00 00 00 02'),
+          line('Médecin coordinateur', '01 00 00 00 03'),
           const SizedBox(height: 8),
           const Text(
             'Les comptes créés pendant la visite restent disponibles jusqu’au '

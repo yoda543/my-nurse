@@ -1,15 +1,15 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app_state.dart';
-import '../../models.dart';
-import '../../theme.dart';
 import '../../widgets.dart';
 import '../notifications.dart';
 import '../wallet.dart';
-import 'booking_detail.dart';
+import 'dashboard.dart';
+import 'complaints.dart';
+import 'family.dart';
+import 'pharmacies.dart';
+import 'tracking.dart';
 import 'health_record.dart';
-import 'patient_form.dart';
-import 'pros_list.dart';
 
 class PatientShell extends StatefulWidget {
   const PatientShell({super.key});
@@ -21,208 +21,72 @@ class PatientShell extends StatefulWidget {
 class _PatientShellState extends State<PatientShell> {
   int _tab = 0;
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: switch (_tab) {
-          0 => const _HomeTab(),
-          1 => const _BookingsTab(),
-          2 => HealthRecordsTab(onAddPatient: () => showPatientForm(context)),
-          _ => const _ProfileTab(),
-        },
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.search), label: 'Trouver'),
-          NavigationDestination(
-            icon: Icon(Icons.event_note_outlined),
-            selectedIcon: Icon(Icons.event_note),
-            label: 'Mes soins',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.menu_book_outlined),
-            selectedIcon: Icon(Icons.menu_book),
-            label: 'Carnet',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profil',
-          ),
-        ],
-      ),
-    );
-  }
-}
+  static const _destinations = [
+    (Icons.home_outlined, Icons.home, 'Accueil'),
+    (Icons.event_note_outlined, Icons.event_note, 'Mes soins'),
+    (Icons.family_restroom_outlined, Icons.family_restroom, 'Famille'),
+    (Icons.local_pharmacy_outlined, Icons.local_pharmacy, 'Proximité'),
+    (Icons.person_outline, Icons.person, 'Compte'),
+  ];
 
-IconData serviceIcon(CareService s) => switch (s.id) {
-  'injection' => Icons.vaccines_outlined,
-  'perfusion' => Icons.water_drop_outlined,
-  'pansement' => Icons.healing_outlined,
-  'sonde' => Icons.medical_services_outlined,
-  'toilette' => Icons.bathtub_outlined,
-  'consultation' => Icons.medical_information_outlined,
-  'kine' => Icons.accessibility_new,
-  _ => Icons.pregnant_woman,
-};
-
-class _HomeTab extends StatefulWidget {
-  const _HomeTab();
-
-  @override
-  State<_HomeTab> createState() => _HomeTabState();
-}
-
-class _HomeTabState extends State<_HomeTab> {
-  @override
-  void initState() {
-    super.initState();
-    // La commune se choisit toute seule à partir de la position.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final app = AppScope.of(context);
-      if (app.place == null && !app.locating) app.detectPlace();
-    });
-  }
+  void _go(int i) => setState(() => _tab = i);
 
   @override
   Widget build(BuildContext context) {
-    final app = AppScope.of(context);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Bonjour ${app.patientName.split(' ').first},',
-                style: const TextStyle(fontSize: 16, color: Colors.black54),
-              ),
-            ),
-            const NotificationBell(),
-          ],
+    final body = switch (_tab) {
+      0 => PatientDashboard(
+        onOpenBookings: () => _go(1),
+        onOpenFamily: () => _go(2),
+        onOpenRecord: (p) => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => HealthRecordScreen(patient: p)),
         ),
-        const SizedBox(height: 2),
-        const Text(
-          'De quel soin avez-vous besoin ?',
-          style: TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.w800,
-            color: brandInk,
-            height: 1.15,
-          ),
-        ),
-        const SizedBox(height: 16),
-        const PatientWalletCard(),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          key: ValueKey(app.commune),
-          initialValue: app.commune,
-          decoration: const InputDecoration(
-            labelText: 'Commune du soin',
-            prefixIcon: Icon(Icons.place_outlined),
-          ),
-          items: [
-            for (final c in communes)
-              DropdownMenuItem(value: c, child: Text(c)),
-          ],
-          onChanged: (c) => app.setCommune(c!),
-        ),
-        const SizedBox(height: 6),
-        LocationStatus(onRetry: app.detectPlace),
-        const SizedBox(height: 20),
-        for (final s in app.services) ...[
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 6,
-              ),
-              leading: CircleAvatar(
-                backgroundColor: const Color(0xFFD5EDE9),
-                child: Icon(serviceIcon(s), color: brandGreen),
-              ),
-              title: Text(
-                s.name,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              subtitle: Text(s.proType.label),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => ProsListScreen(service: s)),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFBE0DA),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: const Row(
+        onOpenPharmacies: () => _go(3),
+      ),
+      1 => const BookingsTab(),
+      2 => const FamilyTab(),
+      3 => const PharmaciesTab(),
+      _ => const _ProfileTab(),
+    };
+    if (isWide(context)) {
+      return Scaffold(
+        body: SafeArea(
+          child: Row(
             children: [
-              Icon(Icons.emergency_outlined, color: Color(0xFF9C2B12)),
-              SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  "Urgence vitale ? MyNurse n'est pas un service d'urgence. "
-                  'Appelez le SAMU au 185.',
-                  style: TextStyle(color: Color(0xFF6B1D0C)),
-                ),
+              NavigationRail(
+                selectedIndex: _tab,
+                onDestinationSelected: _go,
+                labelType: NavigationRailLabelType.all,
+                backgroundColor: Colors.white,
+                destinations: [
+                  for (final d in _destinations)
+                    NavigationRailDestination(
+                      icon: Icon(d.$1),
+                      selectedIcon: Icon(d.$2),
+                      label: Text(d.$3),
+                    ),
+                ],
               ),
+              const VerticalDivider(width: 1),
+              Expanded(child: ContentWidth(maxWidth: 1100, child: body)),
             ],
           ),
         ),
-      ],
-    );
-  }
-}
-
-class _BookingsTab extends StatelessWidget {
-  const _BookingsTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final list = AppScope.of(context).patientBookings;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
-          child: Text(
-            'Mes soins',
-            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
-          ),
-        ),
-        Expanded(
-          child: list.isEmpty
-              ? const EmptyState(
-                  icon: Icons.event_note_outlined,
-                  text: 'Vous n’avez pas encore réservé de soin.',
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                  itemCount: list.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 12),
-                  itemBuilder: (context, i) => BookingCard(
-                    booking: list[i],
-                    forPro: false,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => BookingDetailScreen(booking: list[i]),
-                      ),
-                    ),
-                  ),
-                ),
-        ),
-      ],
+      );
+    }
+    return Scaffold(
+      body: SafeArea(child: body),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: _go,
+        destinations: [
+          for (final d in _destinations)
+            NavigationDestination(
+              icon: Icon(d.$1),
+              selectedIcon: Icon(d.$2),
+              label: d.$3,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -233,11 +97,13 @@ class _ProfileTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
+    void open(Widget w) =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => w));
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         const Text(
-          'Profil',
+          'Compte',
           style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 16),
@@ -248,47 +114,48 @@ class _ProfileTab extends StatelessWidget {
               app.patientName,
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
-            subtitle: Text('Compte patient · ${app.commune}'),
+            subtitle: Text(
+              '${app.familyPatients.length} personne'
+              '${app.familyPatients.length > 1 ? 's' : ''} suivie'
+              '${app.familyPatients.length > 1 ? 's' : ''}',
+            ),
           ),
         ),
-        const SizedBox(height: 24),
-        const Text(
-          'Personnes soignées',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          'Réservez pour vous ou pour un proche, même à distance.',
-          style: TextStyle(color: Colors.black54),
-        ),
+        const SizedBox(height: 12),
+        const PatientWalletCard(),
         const SizedBox(height: 12),
         Card(
           child: Column(
             children: [
-              for (final p in app.patients)
-                ListTile(
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => HealthRecordScreen(patient: p),
-                    ),
-                  ),
-                  leading: const Icon(Icons.person_outline),
-                  title: Text(p.name),
-                  subtitle: Text(
-                    p.allergies.isEmpty
-                        ? p.relation
-                        : '${p.relation} · Allergies : ${p.allergies}',
-                  ),
-                ),
+              ListTile(
+                leading: const Icon(Icons.notifications_outlined),
+                title: const Text('Notifications et rappels'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => open(const NotificationsScreen()),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.support_agent_outlined),
+                title: const Text('Mes réclamations'),
+                subtitle: app.complaints.isEmpty
+                    ? null
+                    : Text(
+                        '${app.complaints.length} envoyée'
+                        '${app.complaints.length > 1 ? 's' : ''}',
+                      ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => open(const ComplaintsScreen()),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.report_outlined),
+                title: const Text('Signaler un problème'),
+                subtitle: const Text('Paiement, compte, autre'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => showComplaintSheet(context),
+              ),
             ],
           ),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: () => showPatientForm(context),
-          icon: const Icon(Icons.add),
-          label: const Text('Ajouter un proche'),
         ),
         const SizedBox(height: 24),
         OutlinedButton.icon(

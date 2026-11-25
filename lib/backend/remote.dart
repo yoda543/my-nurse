@@ -62,6 +62,14 @@ class RemoteSnapshot {
     required this.proBalances,
     required this.premiumRevenue,
     required this.notifications,
+    this.sharedPatients = const [],
+    this.pharmacies = const [],
+    this.complaints = const [],
+    this.recordAccess = const {},
+    this.hasFamilyTables = false,
+    this.incidents = const [],
+    this.adminPermissions = const {},
+    this.adminPatientCount,
   });
 
   final UserRole role;
@@ -78,6 +86,21 @@ class RemoteSnapshot {
   final int proBalances;
   final int premiumRevenue;
   final List<AppNotification> notifications;
+
+  /// Famille et carnet (migrations 0009-0011) ; vides si absentes.
+  final List<Patient> sharedPatients;
+  final List<Pharmacy> pharmacies;
+  final List<Complaint> complaints;
+  final Map<String, List<RecordAccess>> recordAccess;
+  final bool hasFamilyTables;
+
+  /// Incidents signalés par le soignant connecté (0012).
+  final List<Incident> incidents;
+
+  /// Permissions du membre de l'équipe connecté, et nombre de patients
+  /// (comptage serveur, sans données nominatives).
+  final Set<AdminPermission> adminPermissions;
+  final int? adminPatientCount;
 }
 
 /// Accès à la base Supabase. Les règles sont appliquées par le serveur ;
@@ -88,6 +111,13 @@ class RemoteBackend {
   final SupabaseClient client;
 
   String? get userId => client.auth.currentUser?.id;
+
+  /// Le serveur a-t-il les tables famille et carnet (migrations 0009-0011) ?
+  /// Détecté au chargement ; sans elles, l'app garde le fonctionnement V1.
+  bool hasFamilyTables = false;
+
+  /// Le serveur a-t-il l'espace soignant (migration 0012) ?
+  bool hasProTables = false;
   bool get signedIn => client.auth.currentSession != null;
 
   /// Exécute un appel et traduit les erreurs du serveur.
@@ -175,9 +205,7 @@ class RemoteBackend {
       client.from('services').select().eq('active', true),
       client
           .from('pros')
-          .select(
-            '*, pro_services(service_id, price), pro_documents(doc_type, storage_path)',
-          ),
+          .select('*, pro_services(service_id, price), pro_documents(*)'),
       client.from('pro_cancellations').select('pro_id, created_at'),
       client.from('patients').select(),
       client.from('contracts').select('id, frequency'),
@@ -236,8 +264,7 @@ class RemoteBackend {
         rating: (r['rating_avg'] as num).toDouble(),
         ratingCount: _int(r['rating_count']),
         careCount: _int(r['care_count']),
-        status: _enum(
-          VerificationStatus.values,
+        status: VerificationStatusLabel.fromDb(
           r['verification_status'] as String,
         ),
         nightAvailable: r['night_available'] as bool,
@@ -248,8 +275,16 @@ class RemoteBackend {
         premiumUntil: _dateOrNull(r['premium_until']),
       )..referralRewarded = r['referral_rewarded'] as bool;
       for (final d in docs) {
-        p.documentPaths[_key(_docTypes, d['doc_type'] as String)] =
-            d['storage_path'] as String;
+        final type = _key(_docTypes, d['doc_type'] as String);
+        p.documentPaths[type] = d['storage_path'] as String;
+        // Date de validité (0012) : on garde la plus lointaine par pièce.
+        if (d['expires_on'] case final String e) {
+          final date = DateTime.parse(e);
+          final known = p.documentExpiry[type];
+          if (known == null || date.isAfter(known)) {
+            p.documentExpiry[type] = date;
+          }
+        }
       }
       if (r['referred_by'] != null) {
         referrers[p.id] = r['referred_by'] as String;
@@ -276,6 +311,7 @@ class RemoteBackend {
         allergies: r['allergies'] as String,
         history: r['history'] as String,
         treatments: r['treatments'] as String,
+        commune: (r['commune'] as String?) ?? '',
       );
       patients[p.id] = p;
       if (r['owner_id'] == uid) mine.add(p);
@@ -411,7 +447,57 @@ class RemoteBackend {
         ),
     ];
 
+    final family = await _loadFamily(
+      uid: uid,
+      patients: patients,
+      mine: mine,
+      pros: pros,
+      bookingsById: bookingsById,
+    );
+    hasFamilyTables = family != null;
+    final incidents = await _loadPro(
+      uid: uid,
+      me: pros[uid],
+      bookingsById: bookingsById,
+    );
+    for (final r in results[5]) {
+      if (r['refusal_reason'] case final String reason when reason.isNotEmpty) {
+        bookingsById[r['id']]?.refusalReason = reason;
+      }
+      // Remboursements accordés par l'équipe (0013).
+      if (r['admin_refunded'] case final num v when v > 0) {
+        bookingsById[r['id']]?.adminRefunded = v.toInt();
+      }
+    }
+
+    // Administration : permissions et comptages (0013). Sans la fonction
+    // sur le serveur, l'ancien fonctionnement (admin = tous les droits, sauf
+    // l'accès d'urgence au dossier) est conservé.
+    ({int patients, Set<AdminPermission> perms})? admin;
+    if (role == UserRole.admin) {
+      try {
+        admin = await adminContext();
+      } on BusinessRuleError catch (e) {
+        if (!e.message.contains('Could not find')) rethrow;
+      }
+    }
+
     return RemoteSnapshot(
+      adminPermissions:
+          admin?.perms ??
+          (role == UserRole.admin
+              ? {
+                  for (final p in AdminPermission.values)
+                    if (p != AdminPermission.medicalBreakGlass) p,
+                }
+              : const {}),
+      adminPatientCount: admin?.patients,
+      incidents: incidents,
+      sharedPatients: family?.shared ?? const [],
+      pharmacies: family?.pharmacies ?? const [],
+      complaints: family?.complaints ?? const [],
+      recordAccess: family?.access ?? const {},
+      hasFamilyTables: family != null,
       role: role,
       fullName: profile['full_name'] as String,
       services: services,
@@ -426,6 +512,339 @@ class RemoteBackend {
       notifications: notifications,
     );
   });
+
+  /// Proches, carnet, documents, accès, pharmacies, réclamations, avis.
+  /// Renvoie null si le serveur n'a pas encore ces tables : l'app garde
+  /// alors le fonctionnement V1 sans erreur.
+  Future<
+    ({
+      List<Patient> shared,
+      List<Pharmacy> pharmacies,
+      List<Complaint> complaints,
+      Map<String, List<RecordAccess>> access,
+    })?
+  >
+  _loadFamily({
+    required String uid,
+    required Map<String, Patient> patients,
+    required List<Patient> mine,
+    required Map<String, Pro> pros,
+    required Map<String, Booking> bookingsById,
+  }) async {
+    final List<List<dynamic>> r;
+    try {
+      r = await Future.wait<List<dynamic>>([
+        client.from('patient_members').select().isFilter('revoked_at', null),
+        client.rpc('my_shared_patients').then((v) => v as List<dynamic>),
+        client.from('medical_records').select(),
+        client
+            .from('medical_documents')
+            .select()
+            .isFilter('deleted_at', null)
+            .order('created_at', ascending: false),
+        client
+            .from('record_access_grants')
+            .select(
+              'id, patient_id, grantee_id, scopes, expires_at, booking_id',
+            )
+            .isFilter('revoked_at', null)
+            .gt('expires_at', DateTime.now().toUtc().toIso8601String()),
+        client.from('pharmacies').select().eq('active', true),
+        client
+            .from('complaints')
+            .select()
+            .order('created_at', ascending: false),
+        client
+            .from('reviews')
+            .select('pro_id, rating, comment, created_at')
+            .order('created_at', ascending: false)
+            .limit(500),
+      ]);
+    } on PostgrestException catch (e) {
+      // Table ou fonction absente : migrations pas encore appliquées.
+      if (const ['42P01', '42883', 'PGRST202', 'PGRST205'].contains(e.code)) {
+        return null;
+      }
+      rethrow;
+    }
+    Set<FamilyPermission> perms(dynamic v) => {
+      for (final x in (v as List).cast<String>())
+        FamilyPermission.values.firstWhere((p) => p.dbName == x),
+    };
+
+    // Proches autorisés sur mes dossiers.
+    final mineIds = {for (final p in mine) p.id};
+    for (final m in r[0]) {
+      final p = patients[m['patient_id']];
+      if (p == null || !mineIds.contains(p.id)) continue;
+      p.members.add(
+        FamilyMember(
+          id: m['id'] as String,
+          name: (m['display_name'] as String?)?.isNotEmpty == true
+              ? m['display_name'] as String
+              : 'Proche',
+          contact: (m['contact_hint'] as String?) ?? '',
+          relation: (m['relation_label'] as String?) ?? '',
+          permissions: perms(m['permissions']),
+          addedAt: _date(m['created_at']),
+          accountId: m['member_id'] as String,
+          expiresAt: _dateOrNull(m['expires_at']),
+        ),
+      );
+    }
+    // Dossiers qu'on m'a confiés.
+    final shared = <Patient>[];
+    for (final row in r[1]) {
+      final p = patients[row['patient_id']];
+      if (p == null) continue;
+      p.ownerName = row['owner_name'] as String;
+      p.members.add(
+        FamilyMember(
+          id: row['member_id'] as String,
+          name: 'Vous',
+          contact: '',
+          relation: '',
+          permissions: perms(row['permissions']),
+          addedAt: DateTime.now(),
+          accountId: uid,
+          expiresAt: _dateOrNull(row['expires_at']),
+        ),
+      );
+      shared.add(p);
+    }
+    // Carnet : le dossier fait foi quand il existe.
+    for (final m in r[2]) {
+      final p = patients[m['patient_id']];
+      if (p == null) continue;
+      p
+        ..allergies = m['allergies'] as String
+        ..treatments = m['current_treatments'] as String
+        ..history = m['history'] as String
+        ..bloodGroup = (m['blood_group'] as String?) ?? ''
+        ..emergencyContact = (m['emergency_contact_name'] as String?) ?? '';
+    }
+    for (final d in r[3]) {
+      final p = patients[d['patient_id']];
+      if (p == null) continue;
+      final path = d['storage_path'] as String;
+      p.documents.add(
+        MedicalDocument(
+          id: d['id'] as String,
+          kind: MedicalDocKind.values.firstWhere(
+            (k) => k.dbName == d['kind'],
+            orElse: () => MedicalDocKind.other,
+          ),
+          title: d['title'] as String,
+          addedAt: _date(d['created_at']),
+          addedBy: d['uploaded_by'] == uid
+              ? 'vous'
+              : pros.containsKey(d['uploaded_by'])
+              ? pros[d['uploaded_by']]!.name
+              : 'un proche',
+          fileName: path.split('/').last,
+          storagePath: path,
+          documentDate: d['document_date'] == null
+              ? null
+              : DateTime.parse(d['document_date'] as String),
+        ),
+      );
+    }
+    // Accès des soignants à mes dossiers.
+    final access = <String, List<RecordAccess>>{};
+    for (final g in r[4]) {
+      if (!mineIds.contains(g['patient_id']) || g['grantee_id'] == uid) {
+        continue;
+      }
+      final scopes = (g['scopes'] as List).cast<String>();
+      final pro = pros[g['grantee_id']];
+      access
+          .putIfAbsent(g['patient_id'] as String, () => [])
+          .add(
+            RecordAccess(
+              id: g['id'] as String,
+              who: pro == null
+                  ? 'Équipe MyNurse (accès d’urgence)'
+                  : '${pro.name} · ${pro.type.label}',
+              scope: scopes.length == 1 && scopes.first == 'summary'
+                  ? 'Identité, allergies et traitements, pour décider'
+                  : 'Carnet complet, le temps du soin',
+              until: _date(g['expires_at']),
+              booking: bookingsById[g['booking_id']],
+            ),
+          );
+    }
+    final pharmacies = [
+      for (final ph in r[5])
+        Pharmacy(
+          id: ph['id'] as String,
+          name: ph['name'] as String,
+          commune: ph['commune'] as String,
+          address: ph['address'] as String,
+          phone: (ph['phone'] as String?) ?? '',
+          location: ph['location_lat'] == null || ph['location_lng'] == null
+              ? null
+              : GeoPoint(
+                  (ph['location_lat'] as num).toDouble(),
+                  (ph['location_lng'] as num).toDouble(),
+                ),
+          onDutyFrom: _dateOrNull(ph['on_duty_from']),
+          onDutyUntil: _dateOrNull(ph['on_duty_until']),
+        ),
+    ];
+    const statuses = {
+      'open': ComplaintStatus.open,
+      'in_review': ComplaintStatus.inReview,
+      'resolved': ComplaintStatus.resolved,
+      'rejected': ComplaintStatus.rejected,
+    };
+    final complaints = [
+      for (final c in r[6])
+        Complaint(
+          id: c['id'] as String,
+          category: ComplaintCategory.values.firstWhere(
+            (k) => k.dbName == c['category'],
+            orElse: () => ComplaintCategory.other,
+          ),
+          description: c['description'] as String,
+          createdAt: _date(c['created_at']),
+          booking: bookingsById[c['booking_id']],
+          status: statuses[c['status']] ?? ComplaintStatus.open,
+          resolution: (c['resolution'] as String?) ?? '',
+        ),
+    ];
+    for (final rv in r[7]) {
+      pros[rv['pro_id']]?.reviews.add(
+        ProReview(
+          rating: _int(rv['rating']),
+          comment: (rv['comment'] as String?) ?? '',
+          at: _date(rv['created_at']),
+        ),
+      );
+    }
+    return (
+      shared: shared,
+      pharmacies: pharmacies,
+      complaints: complaints,
+      access: access,
+    );
+  }
+
+  /// Espace soignant : disponibilités, mesures (0010-0011), journal de
+  /// visite et incidents (0012). Chaque bloc est facultatif : sans les
+  /// tables sur le serveur, l'app garde le fonctionnement précédent.
+  Future<List<Incident>> _loadPro({
+    required String uid,
+    required Pro? me,
+    required Map<String, Booking> bookingsById,
+  }) async {
+    bool missing(PostgrestException e) =>
+        const ['42P01', '42883', 'PGRST202', 'PGRST205'].contains(e.code);
+    if (hasFamilyTables) {
+      try {
+        final r = await Future.wait<List<dynamic>>([
+          client.from('vital_signs').select().eq('entered_in_error', false),
+          if (me != null)
+            client.from('availability_rules').select().eq('pro_id', uid),
+          if (me != null)
+            client
+                .from('availability_exceptions')
+                .select()
+                .eq('pro_id', uid)
+                .eq('kind', 'off'),
+        ]);
+        for (final v in r[0]) {
+          final b = bookingsById[v['booking_id']];
+          if (b == null) continue;
+          b.vitals.add(
+            VitalSign(
+              kind: VitalKind.values.firstWhere(
+                (k) => k.dbName == v['kind'],
+                orElse: () => VitalKind.temperature,
+              ),
+              value: (v['value'] as num).toDouble(),
+              value2: (v['value2'] as num?)?.toDouble(),
+              at: _date(v['measured_at']),
+              by: v['recorded_by'] == b.pro.id ? b.pro.name : 'un proche',
+              booking: b,
+            ),
+          );
+        }
+        if (me != null) {
+          int minutes(String t) =>
+              int.parse(t.substring(0, 2)) * 60 + int.parse(t.substring(3, 5));
+          me.availability.addAll([
+            for (final a in r[1])
+              AvailabilityRule(
+                _int(a['weekday']),
+                minutes(a['start_time'] as String),
+                minutes(a['end_time'] as String),
+              ),
+          ]);
+          for (final e in r[2]) {
+            // Intervalle PostgreSQL : ["début","fin")
+            final parts = (e['period'] as String)
+                .replaceAll(RegExp(r'[\[\]()"]'), '')
+                .split(',');
+            if (parts.length == 2) {
+              me.daysOff.add((
+                from: DateTime.parse(parts[0].trim()).toLocal(),
+                to: DateTime.parse(parts[1].trim()).toLocal(),
+                reason: (e['reason'] as String?) ?? '',
+              ));
+            }
+          }
+        }
+      } on PostgrestException catch (e) {
+        if (!missing(e)) rethrow;
+      }
+    }
+    try {
+      final r = await Future.wait<List<dynamic>>([
+        client.from('care_journal_entries').select().order('created_at'),
+        client
+            .from('incident_reports')
+            .select()
+            .order('created_at', ascending: false),
+      ]);
+      hasProTables = true;
+      for (final j in r[0]) {
+        bookingsById[j['booking_id']]?.journal.add(
+          JournalEntry(
+            switch (j['kind']) {
+              'on_the_way' => JournalKind.onTheWay,
+              'arrived' => JournalKind.arrived,
+              'left' => JournalKind.left,
+              _ => JournalKind.note,
+            },
+            _date(j['created_at']),
+            (j['text'] as String?) ?? '',
+          ),
+        );
+      }
+      return [
+        for (final i in r[1])
+          Incident(
+            id: i['id'] as String,
+            category: IncidentCategory.values.firstWhere(
+              (c) => c.dbName == i['category'],
+              orElse: () => IncidentCategory.other,
+            ),
+            description: i['description'] as String,
+            at: _date(i['created_at']),
+            booking: bookingsById[i['booking_id']],
+            status: switch (i['status']) {
+              'in_review' => 'En cours',
+              'closed' => 'Traité',
+              _ => 'Envoyé',
+            },
+          ),
+      ];
+    } on PostgrestException catch (e) {
+      if (!missing(e)) rethrow;
+      hasProTables = false;
+      return const [];
+    }
+  }
 
   static Map<String, dynamic>? _one(dynamic v) {
     if (v is Map<String, dynamic>) return v;
@@ -460,6 +879,7 @@ class RemoteBackend {
     required String relation,
     required String allergies,
     int? birthYear,
+    String commune = '',
   }) => _call(() async {
     final row = await client
         .from('patients')
@@ -469,27 +889,49 @@ class RemoteBackend {
           'relation': relation,
           'allergies': allergies,
           'birth_date': ?(birthYear == null ? null : '$birthYear-01-01'),
+          // Colonne ajoutée par la migration 0010 (envoyée seulement si
+          // elle existe sur le serveur).
+          if (hasFamilyTables && commune.isNotEmpty) 'commune': commune,
         })
         .select('id')
         .single();
     return row['id'] as String;
   });
 
+  /// Met à jour le carnet. Avec les migrations 0010+, le dossier médical
+  /// fait foi (un proche autorisé peut le modifier) ; le titulaire met aussi
+  /// à jour l'ancienne fiche, encore lue par les versions précédentes.
   Future<void> updatePatient(
     String id, {
     required String allergies,
     required String history,
     required String treatments,
-  }) => _call(
-    () => client
-        .from('patients')
-        .update({
-          'allergies': allergies,
-          'history': history,
-          'treatments': treatments,
-        })
-        .eq('id', id),
-  );
+    String? bloodGroup,
+    String? emergencyContact,
+    bool owner = true,
+  }) => _call(() async {
+    if (owner) {
+      await client
+          .from('patients')
+          .update({
+            'allergies': allergies,
+            'history': history,
+            'treatments': treatments,
+          })
+          .eq('id', id);
+    }
+    if (!hasFamilyTables) return;
+    await client.from('medical_records').upsert({
+      'patient_id': id,
+      'allergies': allergies,
+      'history': history,
+      'current_treatments': treatments,
+      'blood_group': ?(bloodGroup == null || bloodGroup.isEmpty
+          ? null
+          : bloodGroup),
+      'emergency_contact_name': ?emergencyContact,
+    });
+  });
 
   // ------------------------------------------------------------ réservations
   Map<String, dynamic> _bookingRow({
@@ -586,12 +1028,26 @@ class RemoteBackend {
     return id;
   });
 
-  Future<void> respond(String bookingId, bool accept) => _call(
-    () => client.rpc(
-      'respond_booking',
-      params: {'p_booking': bookingId, 'p_accept': accept},
-    ),
-  );
+  /// Réponse du soignant. Un refus motivé passe par refuse_booking (0012) ;
+  /// sans cette fonction sur le serveur, on refuse sans motif.
+  Future<void> respond(String bookingId, bool accept, {String reason = ''}) =>
+      _call(() async {
+        if (!accept && reason.trim().isNotEmpty) {
+          try {
+            await client.rpc(
+              'refuse_booking',
+              params: {'p_booking': bookingId, 'p_reason': reason.trim()},
+            );
+            return;
+          } on PostgrestException catch (e) {
+            if (e.code != 'PGRST202') rethrow;
+          }
+        }
+        await client.rpc(
+          'respond_booking',
+          params: {'p_booking': bookingId, 'p_accept': accept},
+        );
+      });
 
   Future<void> payWithWallet(String bookingId) => _call(
     () =>
@@ -668,36 +1124,43 @@ class RemoteBackend {
         {'pro_id': uid, 'service_id': e.key, 'price': e.value},
     ]);
     await uploadDocuments(files);
+    // Statut selon les pièces : incomplet ou en attente (0012).
+    if (hasProTables) await client.rpc('submit_pro_dossier');
   });
 
   /// Envoie les pièces dans le stockage privé, puis les enregistre.
-  Future<void> uploadDocuments(Map<DocType, PickedFile> files) =>
-      _call(() async {
-        final uid = userId!;
-        final stamp = DateTime.now().millisecondsSinceEpoch;
-        for (final e in files.entries) {
-          final ext = e.value.name.contains('.')
-              ? e.value.name.split('.').last.toLowerCase()
-              : 'jpg';
-          final path = '$uid/${_docTypes[e.key]}_$stamp.$ext';
-          await client.storage
-              .from('pro-documents')
-              .uploadBinary(
-                path,
-                e.value.bytes,
-                fileOptions: FileOptions(
-                  contentType: ext == 'pdf'
-                      ? 'application/pdf'
-                      : (ext == 'png' ? 'image/png' : 'image/jpeg'),
-                ),
-              );
-          await client.from('pro_documents').insert({
-            'pro_id': uid,
-            'doc_type': _docTypes[e.key],
-            'storage_path': path,
-          });
-        }
+  Future<void> uploadDocuments(
+    Map<DocType, PickedFile> files, {
+    Map<DocType, DateTime?> expiry = const {},
+  }) => _call(() async {
+    final uid = userId!;
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    for (final e in files.entries) {
+      final ext = e.value.name.contains('.')
+          ? e.value.name.split('.').last.toLowerCase()
+          : 'jpg';
+      final path = '$uid/${_docTypes[e.key]}_$stamp.$ext';
+      await client.storage
+          .from('pro-documents')
+          .uploadBinary(
+            path,
+            e.value.bytes,
+            fileOptions: FileOptions(
+              contentType: ext == 'pdf'
+                  ? 'application/pdf'
+                  : (ext == 'png' ? 'image/png' : 'image/jpeg'),
+            ),
+          );
+      await client.from('pro_documents').insert({
+        'pro_id': uid,
+        'doc_type': _docTypes[e.key],
+        'storage_path': path,
+        // Colonne ajoutée par 0012.
+        if (hasProTables && expiry[e.key] != null)
+          'expires_on': expiry[e.key]!.toIso8601String().substring(0, 10),
       });
+    }
+  });
 
   Future<Uri> documentUrl(String path) => _call(() async {
     final url = await client.storage
@@ -747,4 +1210,482 @@ class RemoteBackend {
       params: {'p_pro': id, 'p_reason': reason},
     ),
   );
+
+  // ------------------------------------------------ famille et carnet (0009+)
+  Future<String> addFamilyMember(
+    String patientId, {
+    required String contact,
+    required String name,
+    required String relation,
+    required Set<FamilyPermission> permissions,
+    DateTime? expiresAt,
+  }) => _call(() async {
+    final id = await client.rpc(
+      'add_patient_member',
+      params: {
+        'p_patient': patientId,
+        'p_contact': contact,
+        'p_relation': relation == 'Aide à domicile' ? 'caregiver' : 'family',
+        'p_permissions': [for (final p in permissions) p.dbName],
+        'p_expires_at': expiresAt == null ? null : _iso(expiresAt),
+        'p_display_name': name,
+        'p_relation_label': relation,
+      },
+    );
+    return id as String;
+  });
+
+  Future<void> updateFamilyMember(
+    String memberId,
+    Set<FamilyPermission> permissions,
+    DateTime? expiresAt,
+  ) => _call(
+    () => client.rpc(
+      'update_patient_member',
+      params: {
+        'p_member': memberId,
+        'p_permissions': [for (final p in permissions) p.dbName],
+        'p_expires_at': expiresAt == null ? null : _iso(expiresAt),
+      },
+    ),
+  );
+
+  Future<void> revokeFamilyMember(String memberId) => _call(
+    () => client.rpc('revoke_patient_member', params: {'p_member': memberId}),
+  );
+
+  Future<void> revokeRecordAccess(String grantId) => _call(
+    () => client.rpc(
+      'revoke_record_access',
+      params: {'p_grant': grantId, 'p_reason': 'Retiré par le patient'},
+    ),
+  );
+
+  /// Dépose le fichier dans le dossier du patient puis l'enregistre.
+  Future<String> addDocument(
+    String patientId,
+    MedicalDocKind kind,
+    String title,
+    PickedFile file,
+    DateTime? documentDate,
+  ) => _call(() async {
+    final ext = file.name.split('.').last.toLowerCase();
+    final mime = ext == 'pdf'
+        ? 'application/pdf'
+        : ext == 'png'
+        ? 'image/png'
+        : 'image/jpeg';
+    final path =
+        '$patientId/${DateTime.now().millisecondsSinceEpoch}-${kind.dbName}.$ext';
+    await client.storage
+        .from('medical-documents')
+        .uploadBinary(
+          path,
+          file.bytes,
+          fileOptions: FileOptions(contentType: mime),
+        );
+    final row = await client
+        .from('medical_documents')
+        .insert({
+          'patient_id': patientId,
+          'kind': kind.dbName,
+          'title': title,
+          'storage_path': path,
+          'mime_type': mime,
+          'size_bytes': file.bytes.length,
+          'document_date': documentDate?.toIso8601String().substring(0, 10),
+          'uploaded_by': userId,
+        })
+        .select('id')
+        .single();
+    return row['id'] as String;
+  });
+
+  Future<void> hideDocument(String id) => _call(
+    () => client
+        .from('medical_documents')
+        .update({
+          'deleted_at': DateTime.now().toUtc().toIso8601String(),
+          'deleted_by': userId,
+        })
+        .eq('id', id),
+  );
+
+  Future<Uint8List> downloadMedicalFile(String path) =>
+      _call(() => client.storage.from('medical-documents').download(path));
+
+  Future<String> openComplaint(
+    String? bookingId,
+    ComplaintCategory category,
+    String description,
+  ) => _call(() async {
+    final id = await client.rpc(
+      'open_complaint',
+      params: {
+        'p_booking': bookingId,
+        'p_category': category.dbName,
+        'p_description': description,
+      },
+    );
+    return id as String;
+  });
+
+  // ------------------------------------------------- espace soignant (0012)
+  Future<void> submitProDossier() =>
+      _call(() => client.rpc('submit_pro_dossier'));
+
+  Future<void> startReview(String proId) =>
+      _call(() => client.rpc('admin_start_review', params: {'p_pro': proId}));
+
+  /// Remplace les plages hebdomadaires (table availability_rules, 0011).
+  Future<void> setAvailability(List<AvailabilityRule> rules) => _call(() async {
+    final uid = userId!;
+    await client.from('availability_rules').delete().eq('pro_id', uid);
+    if (rules.isEmpty) return;
+    String t(int m) =>
+        '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';
+    await client.from('availability_rules').insert([
+      for (final r in rules)
+        {
+          'pro_id': uid,
+          'weekday': r.weekday,
+          'start_time': t(r.startMinute),
+          'end_time': t(r.endMinute),
+        },
+    ]);
+  });
+
+  Future<void> setDayOff(DateTime from, DateTime to, bool off) =>
+      _call(() async {
+        final uid = userId!;
+        final range = '[${_iso(from)},${_iso(to)})';
+        if (off) {
+          await client.from('availability_exceptions').insert({
+            'pro_id': uid,
+            'period': range,
+            'kind': 'off',
+            'reason': 'Indisponible',
+          });
+        } else {
+          await client
+              .from('availability_exceptions')
+              .delete()
+              .eq('pro_id', uid)
+              .eq('kind', 'off')
+              .filter('period', 'ov', range);
+        }
+      });
+
+  /// Soins et tarifs : ajoute, modifie, retire (la base contrôle la
+  /// profession et la fourchette de prix).
+  Future<void> updateServices(Map<String, int> prices) => _call(() async {
+    final uid = userId!;
+    final current = await client
+        .from('pro_services')
+        .select('service_id')
+        .eq('pro_id', uid);
+    final removed = [
+      for (final r in current)
+        if (!prices.containsKey(r['service_id'])) r['service_id'] as String,
+    ];
+    if (removed.isNotEmpty) {
+      await client
+          .from('pro_services')
+          .delete()
+          .eq('pro_id', uid)
+          .inFilter('service_id', removed);
+    }
+    await client.from('pro_services').upsert([
+      for (final e in prices.entries)
+        {'pro_id': uid, 'service_id': e.key, 'price': e.value},
+    ]);
+  });
+
+  Future<void> addJournal(String bookingId, JournalKind kind, String text) =>
+      _call(
+        () => client.rpc(
+          'add_care_journal',
+          params: {
+            'p_booking': bookingId,
+            'p_kind': switch (kind) {
+              JournalKind.onTheWay => 'on_the_way',
+              JournalKind.arrived => 'arrived',
+              JournalKind.note => 'note',
+              JournalKind.left => 'left',
+            },
+            'p_text': text,
+          },
+        ),
+      );
+
+  Future<void> recordVital(
+    String patientId,
+    String bookingId,
+    VitalKind kind,
+    double value,
+    double? value2,
+  ) => _call(
+    () => client.from('vital_signs').insert({
+      'patient_id': patientId,
+      'booking_id': bookingId,
+      'kind': kind.dbName,
+      'value': value,
+      'value2': ?value2,
+      'unit': kind.unit,
+      'recorded_by': userId,
+    }),
+  );
+
+  /// Lecture tracée du dossier (get_patient_chart, 0010) : le serveur ne
+  /// renvoie que le périmètre autorisé et journalise chaque lecture.
+  Future<PatientChart> patientChart(String patientId, ScopeOfPractice scope) =>
+      _call(() async {
+        final j = Map<String, dynamic>.from(
+          await client.rpc(
+            'get_patient_chart',
+            params: {'p_patient': patientId},
+          ) as Map,
+        );
+        final p = _one(j['patient']) ?? const {};
+        final r = _one(j['record']) ?? const {};
+        final birth = p['birth_date'] as String?;
+        final full = j['vitals'] != null && scope.fullRecord;
+        return PatientChart(
+          name: (p['full_name'] as String?) ?? 'Patient',
+          age: birth == null
+              ? null
+              : DateTime.now().year - int.parse(birth.substring(0, 4)),
+          scopeLabel: full
+              ? 'Soin confirmé : carnet complet le temps du soin. Chaque '
+                    'consultation est enregistrée.'
+              : 'Accès limité à l’essentiel (allergies, traitements). Chaque '
+                    'consultation est enregistrée.',
+          allergies: (r['allergies'] as String?) ?? '',
+          treatments: (r['current_treatments'] as String?) ?? '',
+          history: full ? (r['history'] as String?) ?? '' : '',
+          bloodGroup: full ? (r['blood_group'] as String?) ?? '' : '',
+          emergencyContact: (r['emergency_contact_name'] as String?) ?? '',
+          documents: !scope.documents
+              ? const []
+              : [
+                  for (final d in (j['documents'] as List? ?? const []))
+                    MedicalDocument(
+                      id: d['id'] as String,
+                      kind: MedicalDocKind.values.firstWhere(
+                        (k) => k.dbName == d['kind'],
+                        orElse: () => MedicalDocKind.other,
+                      ),
+                      title: d['title'] as String,
+                      addedAt: _date(d['created_at']),
+                      addedBy: 'famille',
+                      fileName: (d['storage_path'] as String).split('/').last,
+                      storagePath: d['storage_path'] as String,
+                    ),
+                ],
+          vitals: !full
+              ? const []
+              : [
+                  for (final v in (j['vitals'] as List? ?? const []))
+                    VitalSign(
+                      kind: VitalKind.values.firstWhere(
+                        (k) => k.dbName == v['kind'],
+                        orElse: () => VitalKind.temperature,
+                      ),
+                      value: (v['value'] as num).toDouble(),
+                      value2: (v['value2'] as num?)?.toDouble(),
+                      at: _date(v['measured_at']),
+                      by: 'soignant',
+                    ),
+                ],
+          reports: !full
+              ? const []
+              : [
+                  for (final c in (j['reports'] as List? ?? const []))
+                    (
+                      at: _date(c['arrived_at']),
+                      pro: (c['pro_name'] as String?) ?? '',
+                      acts: c['acts'] as String,
+                      observations: (c['observations'] as String?) ?? '',
+                    ),
+                ],
+        );
+      });
+
+  Future<String> reportIncident(
+    String? bookingId,
+    IncidentCategory category,
+    String description,
+  ) => _call(() async {
+    final id = await client.rpc(
+      'report_incident',
+      params: {
+        'p_booking': bookingId,
+        'p_category': category.dbName,
+        'p_description': description,
+      },
+    );
+    return id as String;
+  });
+
+  // ------------------------------------------------------ administration
+  Future<void> setStaffPermission(
+    String profileId,
+    AdminPermission p,
+    bool grant,
+  ) => _call(
+    () => client.rpc(
+      'admin_set_staff_permission',
+      params: {'p_profile': profileId, 'p_perm': p.dbName, 'p_grant': grant},
+    ),
+  );
+
+  Future<void> adminCancelBooking(String bookingId, String reason) => _call(
+    () => client.rpc(
+      'admin_cancel_booking',
+      params: {'p_booking': bookingId, 'p_reason': reason},
+    ),
+  );
+
+  Future<void> adminRefund(String bookingId, int amount, String reason) =>
+      _call(
+        () => client.rpc(
+          'admin_refund_booking',
+          params: {
+            'p_booking': bookingId,
+            'p_amount': amount,
+            'p_reason': reason,
+          },
+        ),
+      );
+
+  Future<void> adminExtendPremium(String proId, int days, String reason) =>
+      _call(
+        () => client.rpc(
+          'admin_extend_premium',
+          params: {'p_pro': proId, 'p_days': days, 'p_reason': reason},
+        ),
+      );
+
+  Future<void> adminUpdateSetting(String key, Object value) => _call(
+    () => client.rpc(
+      'admin_update_setting',
+      params: {'p_key': key, 'p_value': value},
+    ),
+  );
+
+  Future<void> adminUpdateComplaint(
+    String id,
+    ComplaintStatus status,
+    String resolution,
+    int refund,
+  ) => _call(
+    () => client.rpc(
+      'admin_update_complaint',
+      params: {
+        'p_id': id,
+        'p_status': switch (status) {
+          ComplaintStatus.open => 'open',
+          ComplaintStatus.inReview => 'in_review',
+          ComplaintStatus.resolved => 'resolved',
+          ComplaintStatus.rejected => 'rejected',
+        },
+        'p_resolution': resolution.isEmpty ? null : resolution,
+        'p_refund': refund,
+      },
+    ),
+  );
+
+  Future<void> adminUpdateIncident(String id, String status, String note) =>
+      _call(
+        () => client.rpc(
+          'admin_update_incident',
+          params: {
+            'p_id': id,
+            'p_status': switch (status) {
+              'En cours' => 'in_review',
+              'Traité' => 'closed',
+              _ => 'open',
+            },
+            'p_note': note,
+          },
+        ),
+      );
+
+  Future<void> adminSavePharmacy(Pharmacy p) => _call(
+    () => client.from('pharmacies').upsert({
+      if (!p.id.startsWith('new')) 'id': p.id,
+      'name': p.name,
+      'commune': p.commune,
+      'address': p.address,
+      'phone': p.phone.isEmpty ? null : p.phone,
+      'location_lat': p.location?.lat,
+      'location_lng': p.location?.lng,
+      'on_duty_from': p.onDutyFrom == null ? null : _iso(p.onDutyFrom!),
+      'on_duty_until': p.onDutyUntil == null ? null : _iso(p.onDutyUntil!),
+      'active': true,
+    }),
+  );
+
+  Future<void> adminHidePharmacy(String id) => _call(
+    () => client.from('pharmacies').update({'active': false}).eq('id', id),
+  );
+
+  Future<int> adminBroadcast(
+    BroadcastAudience audience,
+    String title,
+    String body,
+  ) => _call(() async {
+    final n = await client.rpc(
+      'admin_broadcast',
+      params: {'p_audience': audience.name, 'p_title': title, 'p_body': body},
+    );
+    return (n as num).toInt();
+  });
+
+  Future<void> adminBreakGlass(String patientId, String reason) => _call(
+    () => client.rpc(
+      'admin_break_glass',
+      params: {'p_patient': patientId, 'p_reason': reason},
+    ),
+  );
+
+  /// Journal d'activité (audit.events), lecture tracée côté serveur.
+  Future<List<AdminLogEntry>> adminAuditEvents(DateTime since) =>
+      _call(() async {
+        final rows = await client.rpc(
+          'admin_audit_events',
+          params: {'p_since': _iso(since), 'p_limit': 500},
+        );
+        return [
+          for (final e in rows as List)
+            AdminLogEntry(
+              at: _date(e['occurred_at']),
+              actor: (e['actor_role'] as String?) ?? 'serveur',
+              action: '${e['action']}',
+              target: '${e['entity']}',
+              details:
+                  (e['reason'] as String?) ??
+                  ((e['changed_fields'] as List?)?.join(', ') ?? ''),
+              patientId: e['patient_id'] as String?,
+            ),
+        ];
+      });
+
+  /// Indicateurs agrégés et permissions du membre connecté (0013).
+  Future<({int patients, Set<AdminPermission> perms})> adminContext() =>
+      _call(() async {
+        final j = Map<String, dynamic>.from(
+          await client.rpc('admin_dashboard_context') as Map,
+        );
+        return (
+          patients: _int(j['patients']),
+          perms: {
+            for (final x in (j['permissions'] as List? ?? const []))
+              AdminPermission.values.firstWhere(
+                (p) => p.dbName == x,
+                orElse: () => AdminPermission.support,
+              ),
+          },
+        );
+      });
 }

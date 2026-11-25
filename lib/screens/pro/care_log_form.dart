@@ -29,9 +29,27 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
   @override
   void initState() {
     super.initState();
-    final s = widget.booking.scheduledAt;
+    final b = widget.booking;
+    final s = b.arrivedAt ?? b.scheduledAt;
     _arrival = TimeOfDay.fromDateTime(s);
     _departure = TimeOfDay.fromDateTime(s.add(const Duration(minutes: 30)));
+    // Reprend les mesures et notes déjà saisies pendant la visite.
+    String last(VitalKind k) {
+      final v = b.vitals.where((v) => v.kind == k).lastOrNull;
+      if (v == null) return '';
+      return k == VitalKind.bloodPressure
+          ? '${v.value.round()}/${(v.value2 ?? 0).round()}'
+          : v.display.split(' ').first;
+    }
+
+    _bp.text = last(VitalKind.bloodPressure);
+    _temp.text = last(VitalKind.temperature);
+    _pulse.text = last(VitalKind.heartRate);
+    _gly.text = last(VitalKind.glycemia);
+    _obs.text = [
+      for (final j in b.journal)
+        if (j.kind == JournalKind.note) j.text,
+    ].join('\n');
   }
 
   @override

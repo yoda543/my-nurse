@@ -230,7 +230,7 @@ void main() {
         expect(q.refund, 4000);
         await app.cancel(b);
         expect(app.wallet.balance, wallet + 4000);
-        expect(aya.wallet.balance, pro + 4000 - 600);
+        expect(aya.wallet.balance, pro + 4000 - 400); // 10 % de commission
         expect(app.refundTotal, greaterThanOrEqualTo(4000));
       },
     );
@@ -277,7 +277,7 @@ void main() {
       expect(() => contract(sessions: 31), throwsA(isA<BusinessRuleError>()));
     });
 
-    test('commission réduite, acceptation et paiement en une fois', () async {
+    test('commission de 10 %, acceptation et paiement en une fois', () async {
       app.loginPro(AppState.demoProPhone);
       final c = await contract();
       expect(c.sessions, hasLength(3));

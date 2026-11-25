@@ -4,7 +4,9 @@ import '../../app_state.dart';
 import '../../format.dart';
 import '../../models.dart';
 import '../../widgets.dart';
+import 'complaints.dart';
 import 'payment_screen.dart';
+import 'tracking.dart';
 
 class BookingDetailScreen extends StatelessWidget {
   const BookingDetailScreen({super.key, required this.booking});
@@ -16,14 +18,29 @@ class BookingDetailScreen extends StatelessWidget {
     final app = AppScope.of(context);
     final b = booking;
     final log = b.careLog;
+    final mine = app.bookedByMe(b);
     final canCancel =
-        b.status == BookingStatus.pending || b.status == BookingStatus.accepted;
+        mine &&
+        (b.status == BookingStatus.pending ||
+            b.status == BookingStatus.accepted);
     return Scaffold(
       appBar: AppBar(title: const Text('Détail du soin')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
         children: [
           BookingCard(booking: b, forPro: false),
+          const SizedBox(height: 16),
+          CareTimeline(booking: b),
+          if (!mine) ...[
+            const SizedBox(height: 16),
+            InfoBanner(
+              icon: Icons.family_restroom,
+              text:
+                  'Soin réservé par ${app.bookerName(b)}. Vous suivez son '
+                  'avancement ; le paiement et l’annulation se font depuis son '
+                  'compte.',
+            ),
+          ],
           if (b.status == BookingStatus.pending) ...[
             const SizedBox(height: 16),
             InfoBanner(
@@ -34,7 +51,7 @@ class BookingDetailScreen extends StatelessWidget {
                   'pouvez choisir un autre soignant.',
             ),
           ],
-          if (b.awaitingPayment) ...[
+          if (b.awaitingPayment && mine) ...[
             const SizedBox(height: 16),
             InfoBanner(
               icon: Icons.check_circle_outline,
@@ -88,6 +105,12 @@ class BookingDetailScreen extends StatelessWidget {
                 ),
               ),
           ],
+          const SizedBox(height: 20),
+          OutlinedButton.icon(
+            onPressed: () => showComplaintSheet(context, booking: b),
+            icon: const Icon(Icons.report_outlined),
+            label: const Text('Signaler un problème'),
+          ),
           if (canCancel) ...[
             const SizedBox(height: 20),
             OutlinedButton(

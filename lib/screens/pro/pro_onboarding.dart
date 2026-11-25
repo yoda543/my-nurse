@@ -262,10 +262,10 @@ class _ProOnboardingScreenState extends State<ProOnboardingScreen> {
                 subtitle: const Text('Les soins de nuit sont majorés de 50 %.'),
               ),
               _heading('Vos soins et vos prix'),
-              const Text(
+              Text(
                 'Fixez votre prix dans la fourchette recommandée par MyNurse. '
-                'Une commission de 15 % est prélevée sur chaque soin.',
-                style: TextStyle(color: Colors.black54),
+                'Une commission de ${(commissionRate * 100).round()} % est prélevée sur chaque soin.',
+                style: const TextStyle(color: Colors.black54),
               ),
               const SizedBox(height: 8),
               for (final s in services)
@@ -430,87 +430,3 @@ class _ServicePriceTile extends StatelessWidget {
 }
 
 /// Écran affiché tant que le compte n'est pas vérifié.
-class ProStatusScreen extends StatelessWidget {
-  const ProStatusScreen({super.key, required this.pro});
-
-  final Pro pro;
-
-  @override
-  Widget build(BuildContext context) {
-    final app = AppScope.of(context);
-    final (icon, title, text) = switch (pro.status) {
-      VerificationStatus.pending => (
-        Icons.hourglass_top_rounded,
-        'Dossier en cours de vérification',
-        "Merci ${pro.name.split(' ').first}. L'équipe MyNurse contrôle vos "
-            "pièces et votre inscription à l'Ordre, puis vous appelle pour "
-            'un court entretien. Comptez 48 h ouvrées.',
-      ),
-      VerificationStatus.rejected => (
-        Icons.report_outlined,
-        'Dossier à compléter',
-        'Votre dossier n’a pas été validé. Motif : ${pro.rejectionReason}',
-      ),
-      VerificationStatus.suspended => (
-        Icons.block,
-        'Compte suspendu',
-        'Votre compte est suspendu. Motif : ${pro.rejectionReason}. '
-            'Contactez le support MyNurse.',
-      ),
-      VerificationStatus.verified => (Icons.verified, '', ''),
-    };
-    return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Spacer(),
-              Icon(
-                icon,
-                size: 64,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(height: 20),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                text,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 16,
-                  color: Colors.black54,
-                  height: 1.4,
-                ),
-              ),
-              const Spacer(),
-              if (pro.status == VerificationStatus.rejected) ...[
-                FilledButton(
-                  onPressed: () => runAction(
-                    context,
-                    () => app.resubmitPro(pro, requiredDocs(pro.type).toSet()),
-                  ),
-                  child: const Text('Renvoyer mon dossier complété'),
-                ),
-                const SizedBox(height: 12),
-              ],
-              OutlinedButton.icon(
-                onPressed: app.logout,
-                icon: const Icon(Icons.logout),
-                label: const Text('Se déconnecter'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

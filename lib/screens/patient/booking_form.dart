@@ -10,10 +10,14 @@ class BookingFormScreen extends StatefulWidget {
     super.key,
     required this.pro,
     required this.service,
+    this.patient,
   });
 
   final Pro pro;
   final CareService service;
+
+  /// Personne présélectionnée (choisie sur l'accueil).
+  final Patient? patient;
 
   @override
   State<BookingFormScreen> createState() => _BookingFormScreenState();
@@ -26,6 +30,10 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   late DateTime _when;
   bool _prescription = false;
   Patient? _patient;
+
+  /// Commune du soin : celle du proche, pas la position de celui qui
+  /// réserve (qui peut être à l'étranger).
+  String? _commune;
   String? _error;
   bool _recurring = false;
 
@@ -39,13 +47,45 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   @override
   void initState() {
     super.initState();
-    final t = DateTime.now().add(const Duration(days: 1));
-    _when = DateTime(t.year, t.month, t.day, 9);
-    // L'adresse sort directement si la position est déjà connue.
+    _when = DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final place = AppScope.of(context).place;
-      if (place != null && _address.text.isEmpty) _fill(place);
+      final app = AppScope.of(context);
+      // Demain 9 h, selon l'horloge de l'app.
+      final t = app.now.add(const Duration(days: 1));
+      setState(() => _when = DateTime(t.year, t.month, t.day, 9));
+      final list = app.bookablePatients;
+      final p = widget.patient != null && list.contains(widget.patient)
+          ? widget.patient!
+          : list.firstOrNull;
+      if (p != null) _choose(p);
+    });
+  }
+
+  bool _isMe(Patient p) => p == AppScope.of(context).patients.firstOrNull;
+
+  /// Choix de la personne soignée : commune et adresse suivent.
+  void _choose(Patient p) {
+    final app = AppScope.of(context);
+    final last = app.lastPlaceFor(p);
+    setState(() {
+      _patient = p;
+      _commune = app.communeFor(p);
+      _error = null;
+      if (last != null) {
+        _address.text = last.address;
+        _point = last.location;
+        _locationNote =
+            'Dernière adresse utilisée pour ${_isMe(p) ? 'vous' : p.name}.';
+      } else if (_isMe(p) && app.place != null) {
+        _fill(app.place!);
+      } else {
+        _address.clear();
+        _point = null;
+        _locationNote = _isMe(p)
+            ? null
+            : 'Adresse de ${p.name} en Côte d’Ivoire, avec un repère.';
+      }
     });
   }
 
@@ -74,6 +114,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
     setState(() => _locating = false);
     if (place != null) {
       _fill(place);
+      if (place.commune != null) setState(() => _commune = place.commune);
     } else {
       setState(() => _locationNote = app.locationError);
     }
@@ -87,7 +128,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   }
 
   Future<void> _pickDate() async {
-    final now = DateTime.now();
+    final now = AppScope.of(context).now;
     final d = await showDatePicker(
       context: context,
       initialDate: _when,
@@ -133,7 +174,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
         await app.bookContract(
           service: widget.service,
           pro: widget.pro,
-          commune: app.commune,
+          commune: _commune ?? app.commune,
           address: _address.text.trim(),
           firstAt: _when,
           frequency: _frequency,
@@ -147,7 +188,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
         await app.book(
           service: widget.service,
           pro: widget.pro,
-          commune: app.commune,
+          commune: _commune ?? app.commune,
           address: _address.text.trim(),
           scheduledAt: _when,
           hasPrescription: _prescription,
@@ -162,7 +203,8 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
     } catch (_) {
       setState(
         () => _error =
-            'Connexion impossible. Vérifiez votre réseau et réessayez.',
+            'Connexion impossible : la demande n’est pas partie. Vos '
+            'informations sont gardées, réessayez quand le réseau revient.',
       );
       return;
     } finally {
@@ -174,6 +216,8 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
         builder: (_) => _ConfirmationScreen(
           pro: widget.pro,
           sessions: _recurring ? _sessions : 1,
+          patient: _patient ?? app.patients.first,
+          forMe: _isMe(_patient ?? app.patients.first),
         ),
       ),
       (r) => r.isFirst,
@@ -189,6 +233,11 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
         : [_when];
     final total = dates.fold(0, (s, d) => s + careFee(base, d));
     final nightCount = dates.where(isNight).length;
+    final bookable = app.bookablePatients;
+    final servesCommune = widget.pro.communes.contains(_commune ?? app.commune);
+    final who = _patient == null || _isMe(_patient!)
+        ? 'vous'
+        : _patient!.name.split(' ').first;
     return Scaffold(
       appBar: AppBar(title: const Text('Réserver')),
       body: Form(
@@ -206,8 +255,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                 ),
               ),
               Text(
-                'avec ${widget.pro.name} · ${app.commune}'
-                '${app.place?.commune == app.commune ? ' (votre position)' : ''}',
+                'avec ${widget.pro.name} · ${fcfa(base)} par séance',
                 style: const TextStyle(color: Colors.black54),
               ),
               const SizedBox(height: 16),
@@ -231,33 +279,84 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                 }),
               ),
               const SizedBox(height: 16),
-              DropdownButtonFormField<Patient>(
-                key: ValueKey(app.patients.length),
-                initialValue: _patient ?? app.patients.first,
-                decoration: const InputDecoration(
-                  labelText: 'Pour qui est le soin ?',
-                  prefixIcon: Icon(Icons.person_outline),
+              if (bookable.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'Vous n’avez le droit de réserver pour personne. '
+                    'Ajoutez un proche ou demandez ce droit au titulaire.',
+                  ),
+                )
+              else
+                DropdownButtonFormField<Patient>(
+                  isExpanded: true,
+                  key: ValueKey('${bookable.length}-${_patient?.id}'),
+                  initialValue: _patient,
+                  decoration: const InputDecoration(
+                    labelText: 'Pour qui est le soin ?',
+                    prefixIcon: Icon(Icons.person_outline),
+                  ),
+                  items: [
+                    for (final p in bookable)
+                      DropdownMenuItem(
+                        value: p,
+                        child: Text(
+                          _isMe(p)
+                              ? '${p.name} (moi)'
+                              : app.isOwner(p)
+                              ? '${p.name} (${p.relation})'
+                              : '${p.name} (${p.relation}, dossier de ${p.ownerName})',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  validator: (p) =>
+                      p == null ? 'Choisissez la personne soignée.' : null,
+                  onChanged: (p) {
+                    if (p != null) _choose(p);
+                  },
                 ),
-                items: [
-                  for (final p in app.patients)
-                    DropdownMenuItem(
-                      value: p,
-                      child: Text('${p.name} (${p.relation})'),
-                    ),
-                ],
-                onChanged: (p) => setState(() => _patient = p),
-              ),
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
                   onPressed: () async {
                     final p = await showPatientForm(context);
-                    if (p != null) setState(() => _patient = p);
+                    if (p != null) _choose(p);
                   },
                   icon: const Icon(Icons.add),
                   label: const Text('Ajouter un proche'),
                 ),
               ),
+              DropdownButtonFormField<String>(
+                key: ValueKey('commune-$_commune'),
+                initialValue: _commune ?? app.commune,
+                decoration: const InputDecoration(
+                  labelText: 'Commune du soin',
+                  prefixIcon: Icon(Icons.place_outlined),
+                ),
+                items: [
+                  for (final c in communes)
+                    DropdownMenuItem(value: c, child: Text(c)),
+                ],
+                onChanged: (c) => setState(() {
+                  _commune = c;
+                  _error = null;
+                }),
+              ),
+              if (!servesCommune)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '${widget.pro.name} ne se déplace pas à '
+                    '${_commune ?? app.commune} (seulement '
+                    '${widget.pro.communes.join(', ')}). Choisissez un autre '
+                    'soignant pour cette commune.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 12),
               const SizedBox(height: 4),
               Row(
                 children: [
@@ -343,7 +442,10 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                 maxLines: 3,
                 textCapitalization: TextCapitalization.sentences,
                 onTap: () {
-                  if (_address.text.isEmpty) _locate();
+                  if (_address.text.isEmpty &&
+                      (_patient == null || _isMe(_patient!))) {
+                    _locate();
+                  }
                 },
                 onChanged: (v) {
                   if (v.isEmpty) setState(() => _point = null);
@@ -352,7 +454,9 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                   labelText: 'Adresse et repères',
                   hintText: _locating
                       ? 'Localisation en cours…'
-                      : 'Touchez pour utiliser votre position',
+                      : _patient == null || _isMe(_patient!)
+                      ? 'Touchez pour utiliser votre position'
+                      : 'Quartier, rue, repère (portail, couleur…)',
                   alignLabelWithHint: true,
                   prefixIcon: const Icon(Icons.place_outlined),
                   suffixIcon: _locating
@@ -365,7 +469,7 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                           ),
                         )
                       : IconButton(
-                          tooltip: 'Utiliser ma position',
+                          tooltip: 'Je suis sur place : utiliser ma position',
                           onPressed: _locate,
                           icon: const Icon(Icons.my_location),
                         ),
@@ -440,14 +544,24 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
+              const SizedBox(height: 16),
+              _NextSteps(pro: widget.pro, who: who),
               const SizedBox(height: 20),
               FilledButton(
-                onPressed: _sending ? null : _submit,
-                child: Text(
-                  _recurring
-                      ? 'Demander le suivi (${dates.length} séances)'
-                      : 'Envoyer la demande',
-                ),
+                onPressed: _sending || !servesCommune || bookable.isEmpty
+                    ? null
+                    : _submit,
+                child: _sending
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2.4),
+                      )
+                    : Text(
+                        _recurring
+                            ? 'Demander le suivi (${dates.length} séances)'
+                            : 'Envoyer la demande',
+                      ),
               ),
             ],
           ),
@@ -473,11 +587,60 @@ class _BookingFormScreenState extends State<BookingFormScreen> {
   }
 }
 
+/// Ce qui se passe après l'envoi, expliqué avant de cliquer.
+class _NextSteps extends StatelessWidget {
+  const _NextSteps({required this.pro, required this.who});
+
+  final Pro pro;
+  final String who;
+
+  @override
+  Widget build(BuildContext context) {
+    final steps = [
+      '${pro.name} reçoit la demande et a ${responseWindow.inHours} h pour '
+          'répondre.',
+      'Dès sa confirmation, vous payez en ${paymentWindow.inHours} h. '
+          'L’argent reste bloqué jusqu’à la fin du soin.',
+      'Le jour J, le soignant vient pour $who, puis envoie son compte rendu.',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Ensuite', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        for (var i = 0; i < steps.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 11,
+                  backgroundColor: const Color(0xFFD5EDE9),
+                  child: Text('${i + 1}', style: const TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Text(steps[i])),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _ConfirmationScreen extends StatelessWidget {
-  const _ConfirmationScreen({required this.pro, required this.sessions});
+  const _ConfirmationScreen({
+    required this.pro,
+    required this.sessions,
+    required this.patient,
+    required this.forMe,
+  });
 
   final Pro pro;
   final int sessions;
+  final Patient patient;
+  final bool forMe;
 
   @override
   Widget build(BuildContext context) {
@@ -501,8 +664,10 @@ class _ConfirmationScreen extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 '${pro.name} a ${responseWindow.inHours} h pour confirmer '
-                '${sessions > 1 ? 'votre suivi de $sessions séances' : 'votre demande'}. '
-                'Vous la retrouvez dans « Mes soins ».',
+                '${sessions > 1 ? 'le suivi de $sessions séances' : 'la demande'}'
+                '${forMe ? '' : ' pour ${patient.name}'}. Vous serez prévenu'
+                '${forMe ? '' : ', ainsi que les proches qui suivent ses soins'}'
+                '. Vous la retrouvez dans « Mes soins ».',
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 16, color: Colors.black54),
               ),

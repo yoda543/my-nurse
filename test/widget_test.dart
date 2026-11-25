@@ -30,16 +30,16 @@ void main() {
   setUp(() => _now = DateTime(2030, 1, 1, 8));
 
   group('prix', () {
-    test('majoration de nuit de 50 % et commission de 15 %', () async {
+    test('majoration de nuit de 50 % et commission de 10 %', () async {
       final app = _app();
       final day = await _book(app);
       expect(day.price, 8000);
-      expect(day.commission, 1200);
-      expect(day.proEarnings, 6800);
+      expect(day.commission, 800);
+      expect(day.proEarnings, 7200);
 
       final night = await _book(app, at: DateTime(2030, 1, 10, 22));
       expect(night.price, 12000);
-      expect(night.proEarnings, 10200);
+      expect(night.proEarnings, 10800);
     });
   });
 
@@ -253,8 +253,13 @@ void main() {
         nightAvailable: false,
         documents: {DocType.diplome},
       );
-      expect(() => app.verifyPro(p), throwsStateError);
-      expect(p.status, VerificationStatus.pending);
+      // Pièces manquantes : « dossier incomplet », hors de la file des
+      // vérificateurs, et aucune validation possible.
+      expect(p.status, VerificationStatus.incomplete);
+      expect(app.verificationQueue, isNot(contains(p)));
+      await app.verifyPro(p);
+      expect(p.status, VerificationStatus.incomplete);
+      expect(p.activeAt(app.now), isFalse);
     });
 
     test('suspension : soins à venir annulés et remboursés', () async {
@@ -399,6 +404,13 @@ void main() {
     final app = AppState()..login(UserRole.admin);
     await tester.pumpWidget(MyNurseApp(state: app));
     await tester.pumpAndSettle();
+    // Tableau de bord : les indicateurs, puis la file des dossiers.
+    expect(find.text('Patients inscrits'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Bernadette Ouattara'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Dossiers à vérifier'), findsOneWidget);
     expect(find.text('Bernadette Ouattara'), findsOneWidget);
   });

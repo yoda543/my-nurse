@@ -165,3 +165,163 @@ List<Pro> buildDemoPros() => [
     careCount: 88,
   ),
 ];
+
+/// Pharmacies de démonstration (noms et numéros fictifs). La garde tourne :
+/// une pharmacie de garde par commune autour de [now].
+List<Pharmacy> buildDemoPharmacies(DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  final dutyFrom = today.subtract(const Duration(hours: 4)); // la veille 20 h
+  final dutyUntil = today.add(const Duration(days: 1, hours: 8));
+  Pharmacy p(
+    String id,
+    String name,
+    String commune,
+    String address,
+    String phone, {
+    bool duty = false,
+    String hours = 'Lun.–sam. 8 h – 20 h',
+    GeoPoint? at,
+  }) => Pharmacy(
+    id: id,
+    name: name,
+    commune: commune,
+    address: address,
+    phone: phone,
+    hours: hours,
+    location: at,
+    onDutyFrom: duty ? dutyFrom : null,
+    onDutyUntil: duty ? dutyUntil : null,
+  );
+  return [
+    p(
+      'ph1',
+      'Pharmacie des Deux-Plateaux (démo)',
+      'Cocody',
+      'Boulevard Latrille, face à la station',
+      '0700000101',
+      duty: true,
+      at: const GeoPoint(5.3712, -3.9921),
+    ),
+    p(
+      'ph2',
+      'Pharmacie Angré Château (démo)',
+      'Cocody',
+      'Angré 8e tranche, carrefour Château',
+      '0700000102',
+      at: const GeoPoint(5.3954, -3.9853),
+    ),
+    p(
+      'ph3',
+      'Pharmacie de la Palmeraie (démo)',
+      'Riviera',
+      'Riviera Palmeraie, rue Ministre',
+      '0700000103',
+      duty: true,
+      at: const GeoPoint(5.3746, -3.9405),
+    ),
+    p(
+      'ph4',
+      'Pharmacie Riviera 3 (démo)',
+      'Riviera',
+      'Riviera 3, près du marché',
+      '0700000104',
+    ),
+    p(
+      'ph5',
+      'Pharmacie du Centre (démo)',
+      'Bingerville',
+      'Route de Bingerville, centre-ville',
+      '0700000105',
+      duty: true,
+      at: const GeoPoint(5.3550, -3.8857),
+    ),
+    p(
+      'ph6',
+      'Pharmacie Zone 4 (démo)',
+      'Marcory',
+      'Zone 4, rue du Docteur Blanchard',
+      '0700000106',
+      duty: true,
+    ),
+    p(
+      'ph7',
+      'Pharmacie du Commerce (démo)',
+      'Plateau',
+      'Avenue Chardy',
+      '0700000107',
+      duty: true,
+    ),
+    p(
+      'ph8',
+      'Pharmacie Siporex (démo)',
+      'Yopougon',
+      'Yopougon Siporex, voie express',
+      '0700000108',
+      duty: true,
+    ),
+  ];
+}
+
+/// Avis de démonstration (prénom et initiale seulement).
+void addDemoReviews(List<Pro> pros, DateTime now) {
+  DateTime ago(int days) => now.subtract(Duration(days: days));
+  final byId = {for (final p in pros) p.id: p};
+  byId['pro1']?.reviews.addAll([
+    ProReview(
+      rating: 5,
+      comment:
+          'Très douce avec ma mère, ponctuelle et '
+          'elle nous envoie le compte rendu tout de suite.',
+      at: ago(4),
+      serviceName: 'Pansement',
+      author: 'Awa B.',
+    ),
+    ProReview(
+      rating: 5,
+      comment:
+          'Perfusion bien posée, explications '
+          'claires.',
+      at: ago(11),
+      serviceName: 'Perfusion',
+      author: 'Jean K.',
+    ),
+    ProReview(
+      rating: 4,
+      comment:
+          'Arrivée avec 15 minutes de retard mais '
+          'elle a prévenu.',
+      at: ago(20),
+      serviceName: 'Injection',
+      author: 'Mariam T.',
+    ),
+  ]);
+  byId['pro2']?.reviews.addAll([
+    ProReview(
+      rating: 5,
+      comment:
+          'Suit le diabète de mon père depuis 3 '
+          'mois, très sérieux.',
+      at: ago(6),
+      serviceName: 'Injection',
+      author: 'Koffi B.',
+    ),
+    ProReview(
+      rating: 4,
+      comment: 'Bon soignant, un peu pressé.',
+      at: ago(30),
+      serviceName: 'Pansement',
+      author: 'Aminata D.',
+    ),
+  ]);
+  byId['pro5']?.reviews.add(
+    ProReview(
+      rating: 5,
+      comment:
+          'Consultation complète à la maison, il a '
+          'pris le temps.',
+      at: ago(9),
+      serviceName: 'Consultation',
+      author: 'Estelle A.',
+    ),
+  );
+}
