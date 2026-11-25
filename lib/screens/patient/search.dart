@@ -76,7 +76,10 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
-    final results = app.searchPros(_f);
+    final results = app.searchPros(
+      _f,
+      patient: widget.patient ?? app.patients.firstOrNull,
+    );
     final service = _f.serviceId == null
         ? null
         : app.services.firstWhere((s) => s.id == _f.serviceId);
@@ -291,9 +294,31 @@ class ProResultCard extends StatelessWidget {
                       children: [
                         const VerifiedBadge(),
                         if (p.nightAvailable) const _Tag('Nuit'),
-                        if (p.isPremium(app.now)) const _Tag('Mis en avant'),
                       ],
                     ),
+                    if (match.reasons.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      for (final r in match.reasons)
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.check,
+                              size: 14,
+                              color: brandGreen,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                r,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: brandGreen,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
                     if (match.service == null) ...[
                       const SizedBox(height: 6),
                       Text(

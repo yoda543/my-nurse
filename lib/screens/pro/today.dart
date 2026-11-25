@@ -6,6 +6,10 @@ import '../../models.dart';
 import '../../theme.dart';
 import '../../widgets.dart';
 import '../notifications.dart';
+import '../../intelligence/assistant/assistant.dart';
+import '../assistant_screen.dart';
+import 'settings.dart';
+import 'verification.dart';
 import 'visit.dart';
 
 /// « Aujourd'hui » : disponibilité, chiffres du jour, soin en cours ou
@@ -21,6 +25,27 @@ class ProTodayTab extends StatelessWidget {
   final VoidCallback onOpenRequests;
   final VoidCallback onOpenAgenda;
   final VoidCallback onOpenEarnings;
+
+  Future<void> _assistant(BuildContext context) async {
+    final a = await openAssistant(context, AssistantRole.pro);
+    if (a == null || !context.mounted) return;
+    void push(Widget w) =>
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => w));
+    switch (a.destination) {
+      case AssistantDestination.proAgenda:
+        onOpenAgenda();
+      case AssistantDestination.proEarnings:
+        onOpenEarnings();
+      case AssistantDestination.proAvailability:
+        push(const AvailabilityScreen());
+      case AssistantDestination.proServices:
+        push(const ServicesScreen());
+      case AssistantDestination.proVerification:
+        push(const VerificationScreen());
+      default:
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +73,7 @@ class ProTodayTab extends StatelessWidget {
                   month: app.proMonthEarnings,
                   onOpenRequests: onOpenRequests,
                   onOpenEarnings: onOpenEarnings,
+                  onAssistant: () => _assistant(context),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
@@ -192,8 +218,10 @@ class _Header extends StatelessWidget {
     required this.month,
     required this.onOpenRequests,
     required this.onOpenEarnings,
+    required this.onAssistant,
   });
 
+  final VoidCallback onAssistant;
   final Pro pro;
   final int todayCount;
   final int requests;
@@ -261,6 +289,12 @@ class _Header extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+              IconButton(
+                tooltip: 'Assistant MyNurse',
+                color: Colors.white,
+                onPressed: onAssistant,
+                icon: const Icon(Icons.assistant_outlined),
               ),
               const IconTheme(
                 data: IconThemeData(color: Colors.white),

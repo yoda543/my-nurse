@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../app_state.dart';
 import '../../format.dart';
+import '../../intelligence/assistant/pro_tools.dart';
 import '../../models.dart';
 
 /// Journal de soins : le compte rendu rempli par le soignant à chaque passage.
@@ -76,6 +77,73 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
   }
 
   bool _sending = false;
+  List<String> _review = const [];
+
+  /// Range les notes libres dans les rubriques. Rien n'est inventé ni
+  /// envoyé hors du téléphone ; le soignant relit et corrige.
+  Future<void> _structure() async {
+    final ctrl = TextEditingController(
+      text: [
+        _acts.text,
+        _obs.text,
+      ].where((t) => t.trim().isNotEmpty).join('\n'),
+    );
+    final notes = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Vos notes'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Écrivez comme vous parlez : actes, ce que vous avez observé, la '
+              'suite. Ex. « TA 13/8. Pansement refait. Plaie propre. Revoir dans '
+              '2 jours. » Le texte reste sur votre téléphone.',
+              style: TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              minLines: 4,
+              maxLines: 8,
+              textCapitalization: TextCapitalization.sentences,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text),
+            child: const Text('Mettre en forme'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (notes == null || !mounted) return;
+    final d = structureCareNotes(notes, vitals: widget.booking.vitals);
+    setState(() {
+      if (d.bloodPressure.isNotEmpty) _bp.text = d.bloodPressure;
+      if (d.temperature.isNotEmpty) _temp.text = d.temperature;
+      if (d.pulse.isNotEmpty) _pulse.text = d.pulse;
+      if (d.glycemia.isNotEmpty) _gly.text = d.glycemia;
+      _acts.text = d.acts;
+      _obs.text = [
+        d.observations,
+        if (d.followUp.isNotEmpty) 'Suite à donner :\n${d.followUp}',
+      ].where((t) => t.isNotEmpty).join('\n');
+      _review = d.toReview;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Brouillon prêt : relisez et corrigez avant d’envoyer.'),
+      ),
+    );
+  }
 
   Future<void> _submit() async {
     if (_sending) return;
@@ -189,6 +257,28 @@ class _CareLogFormScreenState extends State<CareLogFormScreen> {
                   Expanded(child: _field(_gly, 'Glycémie g/L', hint: '1,10')),
                 ],
               ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _structure,
+                icon: const Icon(Icons.auto_fix_high_outlined),
+                label: const Text('Mettre en forme mes notes'),
+              ),
+              if (_review.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF1D6),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'À relire : ces phrases ressemblent à un diagnostic ou à '
+                    'une prescription. Vérifiez qu’elles relèvent de votre '
+                    'rôle.\n• ${_review.join('\n• ')}',
+                    style: const TextStyle(color: Color(0xFF6B4500)),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               TextFormField(
                 controller: _acts,

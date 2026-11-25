@@ -469,4 +469,11 @@ select pg_temp.ok((select status from public.incident_reports limit 1) = 'closed
 select pg_temp.ok(exists (select 1 from audit.events where action in ('admin_refund', 'admin_cancel', 'admin_broadcast')),
   'actions de l''équipe journalisées');
 
+-- Recherche : l'abonnement Premium ne change pas l'ordre.
+update public.pros set premium_until = now() + interval '30 days' where id = :'B';
+-- A et B sans avis : à note égale, le moins cher (A, 8 000) passe devant
+-- B (9 000), même si B est Premium.
+select pg_temp.ok((select id from public.search_pros('pansement', 'Cocody') limit 1) = :'A',
+  'recherche : pas de priorité Premium');
+
 \echo 'Scénario de sécurité : tous les contrôles sont passés.'

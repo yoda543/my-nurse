@@ -440,7 +440,11 @@ extension PatientFeatures on AppState {
   }
 
   /// Soignants vérifiés de la commune qui correspondent aux critères.
-  List<ProMatch> searchPros(SearchFilters f) {
+  ///
+  /// Tri « recommandés » : moteur de mise en relation (soin, qualification,
+  /// proximité, disponibilité réelle, prix, avis, continuité des soins).
+  /// L'abonnement Premium n'entre pas dans le classement.
+  List<ProMatch> searchPros(SearchFilters f, {Patient? patient, DateTime? at}) {
     final service = f.serviceId == null
         ? null
         : services.where((s) => s.id == f.serviceId).firstOrNull;
@@ -448,7 +452,7 @@ extension PatientFeatures on AppState {
         .split(RegExp(r'\s+'))
         .where((w) => w.length > 1)
         .toList();
-    final out = <ProMatch>[];
+    final candidates = <Pro>[];
     for (final p in pros) {
       if (!p.activeAt(now) || !p.communes.contains(f.commune)) continue;
       if (service != null && !p.prices.containsKey(service.id)) continue;
@@ -469,23 +473,53 @@ extension PatientFeatures on AppState {
         );
         if (!words.every(hay.contains)) continue;
       }
-      out.add(ProMatch(p, price, service: service));
+      candidates.add(p);
     }
-    int byPremium(ProMatch a, ProMatch b) =>
-        (b.pro.isPremium(now) ? 1 : 0) - (a.pro.isPremium(now) ? 1 : 0);
-    out.sort((a, b) {
-      switch (f.sort) {
-        case SearchSort.recommended:
-          final c = byPremium(a, b);
-          return c != 0 ? c : b.pro.rating.compareTo(a.pro.rating);
-        case SearchSort.priceAsc:
-          return a.price.compareTo(b.price);
-        case SearchSort.ratingDesc:
-          return b.pro.rating.compareTo(a.pro.rating);
-        case SearchSort.experienceDesc:
-          return b.pro.yearsExperience.compareTo(a.pro.yearsExperience);
+    final out = <ProMatch>[];
+    if (service != null) {
+      final ranked = const MatchingEngine().recommend(
+        request: MatchRequest(
+          service: service,
+          commune: f.commune,
+          at: at,
+          patient: patient,
+        ),
+        pros: candidates,
+        bookings: bookings,
+        now: now,
+      );
+      for (final r in ranked) {
+        out.add(
+          ProMatch(
+            r.pro,
+            r.price,
+            service: service,
+            score: r.score,
+            reasons: r.reasons.take(3).toList(),
+          ),
+        );
       }
-    });
+    } else {
+      // Sans soin choisi : note bayésienne (le nombre d'avis compte).
+      double bayes(Pro p) =>
+          (p.rating * p.ratingCount + 4.0 * 5) / (p.ratingCount + 5);
+      for (final p
+          in candidates..sort((a, b) => bayes(b).compareTo(bayes(a)))) {
+        out.add(ProMatch(p, p.fromPrice));
+      }
+    }
+    switch (f.sort) {
+      case SearchSort.recommended:
+        break; // ordre du moteur
+      case SearchSort.priceAsc:
+        out.sort((a, b) => a.price.compareTo(b.price));
+      case SearchSort.ratingDesc:
+        out.sort((a, b) => b.pro.rating.compareTo(a.pro.rating));
+      case SearchSort.experienceDesc:
+        out.sort(
+          (a, b) => b.pro.yearsExperience.compareTo(a.pro.yearsExperience),
+        );
+    }
     return out;
   }
 

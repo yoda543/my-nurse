@@ -937,11 +937,24 @@ class SearchFilters {
 
 /// Un soignant trouvé, avec le prix du soin cherché (ou son prix le plus bas).
 class ProMatch {
-  const ProMatch(this.pro, this.price, {this.service});
+  const ProMatch(
+    this.pro,
+    this.price, {
+    this.service,
+    this.score,
+    this.reasons = const [],
+  });
 
   final Pro pro;
   final int price;
   final CareService? service;
+
+  /// Score de pertinence sur 100 (moteur de mise en relation), si un soin
+  /// est choisi.
+  final int? score;
+
+  /// Pourquoi ce soignant est proposé (« A déjà soigné Mariam »…).
+  final List<String> reasons;
 }
 
 /// Plage de travail hebdomadaire (heure d'Abidjan). [weekday] : 1 = lundi.

@@ -544,8 +544,9 @@ class _PremiumCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Vous apparaissez en tête des résultats dans vos communes, et vous '
-              'suivez vos chiffres. ${fcfa(premiumPrice)} pour '
+              'Suivez vos chiffres (acceptation, gains, tendance). Le '
+              'classement des patients ne dépend pas de l’abonnement : il suit '
+              'la qualité, la disponibilité et la proximité. ${fcfa(premiumPrice)} pour '
               '${premiumPeriod.inDays} jours, payés avec votre solde.',
               style: const TextStyle(color: Colors.black54),
             ),

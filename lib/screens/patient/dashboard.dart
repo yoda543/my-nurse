@@ -8,7 +8,10 @@ import '../../theme.dart';
 import '../../widgets.dart';
 import '../notifications.dart';
 import '../wallet.dart';
+import '../../intelligence/assistant/assistant.dart';
+import '../assistant_screen.dart';
 import 'booking_detail.dart';
+import 'complaints.dart';
 import 'search.dart';
 
 /// Accueil du patient : ce qui l'attend, le prochain soin de chaque proche,
@@ -44,6 +47,27 @@ class _PatientDashboardState extends State<PatientDashboard> {
       final app = AppScope.of(context);
       if (app.place == null && !app.locating) app.detectPlace();
     });
+  }
+
+  /// Assistant : il peut renvoyer vers un écran de l'app.
+  Future<void> _assistant() async {
+    final a = await openAssistant(context, AssistantRole.patient);
+    if (a == null || !mounted) return;
+    switch (a.destination) {
+      case AssistantDestination.search:
+        _search(service: a.service);
+      case AssistantDestination.bookings:
+        widget.onOpenBookings();
+      case AssistantDestination.family || AssistantDestination.records:
+        widget.onOpenFamily();
+      case AssistantDestination.pharmacies:
+        widget.onOpenPharmacies();
+      case AssistantDestination.complaints:
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const ComplaintsScreen()));
+      default:
+        break;
+    }
   }
 
   void _search({CareService? service, bool focus = false}) =>
@@ -245,6 +269,11 @@ class _PatientDashboardState extends State<PatientDashboard> {
               icon: Icons.local_pharmacy_outlined,
               label: 'Pharmacies de garde',
               onTap: widget.onOpenPharmacies,
+            ),
+            _Shortcut(
+              icon: Icons.assistant_outlined,
+              label: 'Assistant MyNurse',
+              onTap: _assistant,
             ),
           ],
         ),

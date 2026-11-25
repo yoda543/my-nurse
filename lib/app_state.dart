@@ -4,6 +4,8 @@ import 'package:material_ui/material_ui.dart';
 
 import 'backend/remote.dart';
 import 'data/demo_data.dart';
+import 'intelligence/admin_insights.dart';
+import 'intelligence/matching.dart';
 import 'location.dart';
 import 'models.dart';
 
@@ -866,11 +868,15 @@ class AppState extends ChangeNotifier {
               p.communes.contains(commune),
         )
         .toList();
-    list.sort((a, b) {
-      final byPremium = (b.isPremium(now) ? 1 : 0) - (a.isPremium(now) ? 1 : 0);
-      return byPremium != 0 ? byPremium : b.rating.compareTo(a.rating);
-    });
-    return list;
+    // Pas de priorité Premium : le classement suit le moteur de mise en
+    // relation (lib/intelligence/matching.dart).
+    final ranked = const MatchingEngine().recommend(
+      request: MatchRequest(service: s, commune: commune),
+      pros: list,
+      bookings: bookings,
+      now: now,
+    );
+    return [for (final r in ranked) r.pro];
   }
 
   /// Soin confirmé du soignant qui chevauche ce créneau, s'il y en a un.

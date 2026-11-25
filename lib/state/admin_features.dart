@@ -671,4 +671,101 @@ extension AdminFeatures on AppState {
       ],
     );
   }
+
+  // ========================================================= intelligence
+  /// Signaux, pics, doublons, retours et rapport de la période. Le moteur ne
+  /// reçoit qu'une projection sans aucun champ médical.
+  InsightsReport adminInsights(Period period) {
+    CancelledBy? by(Booking b) {
+      if (b.status != BookingStatus.cancelled) return null;
+      if (b.cancelReason.startsWith('Annulé par le patient')) {
+        return CancelledBy.patient;
+      }
+      if (b.cancelReason.startsWith('Annulé par le soignant')) {
+        return CancelledBy.pro;
+      }
+      return CancelledBy.platform;
+    }
+
+    final facts = [
+      for (final b in bookings)
+        BookingFact(
+          id: b.id,
+          ownerId: b.ownerId,
+          proId: b.pro.id,
+          proName: b.pro.name,
+          commune: b.commune,
+          serviceName: b.service.name.split(' (').first,
+          createdAt: b.createdAt,
+          scheduledAt: b.scheduledAt,
+          status: b.status.name,
+          cancelledBy: by(b),
+          price: b.price,
+          paid: b.paid,
+          refundAmount: b.refundAmount,
+          rating: b.rating,
+          night: b.night,
+        ),
+    ];
+    final people = [
+      for (final a in accounts)
+        if (a.id.isNotEmpty)
+          AccountFact(
+            id: a.id,
+            kind: AccountKind.patient,
+            name: a.name,
+            phone: a.phone,
+          ),
+      for (final p in pros)
+        AccountFact(
+          id: p.id,
+          kind: AccountKind.pro,
+          name: p.name,
+          phone: p.phone,
+        ),
+      for (final m in staff)
+        AccountFact(
+          id: m.id,
+          kind: AccountKind.staff,
+          name: m.name,
+          phone: m.phone,
+        ),
+    ];
+    final complaintFacts = [
+      for (final c in complaints)
+        ComplaintFact(
+          category: c.category.label,
+          text: c.description,
+          createdAt: c.createdAt,
+          proId: c.booking?.pro.id,
+          open:
+              c.status == ComplaintStatus.open ||
+              c.status == ComplaintStatus.inReview,
+        ),
+    ];
+    final reviewFacts = [
+      for (final p in pros)
+        for (final r in p.reviews)
+          ReviewFact(
+            proId: p.id,
+            proName: p.name,
+            rating: r.rating,
+            text: r.comment,
+            at: r.at,
+          ),
+    ];
+    return const AdminInsightsEngine().analyze(
+      from: period.from,
+      to: period.to,
+      now: now,
+      bookings: facts,
+      accounts: people,
+      complaints: complaintFacts,
+      reviews: reviewFacts,
+      proCancellations: {
+        for (final p in pros)
+          if (p.cancellations.isNotEmpty) p.id: p.cancellations,
+      },
+    );
+  }
 }

@@ -345,13 +345,13 @@ void main() {
       },
     );
 
-    test('les Pro Premium apparaissent en tête', () async {
+    test('Premium ne change pas le classement', () async {
       final pansement = service('pansement');
       final ibrahim = app.pros.firstWhere((p) => p.name == 'Ibrahim Traoré');
-      // Ibrahim (4,7) est Premium dans la démo, Aya (4,9) non.
-      expect(app.prosFor(pansement, 'Cocody').first, ibrahim);
+      // Ibrahim est Premium dans la démo : l'ordre est le même sans Premium.
+      final withPremium = app.prosFor(pansement, 'Cocody');
       ibrahim.premiumUntil = null;
-      expect(app.prosFor(pansement, 'Cocody').first, aya);
+      expect(app.prosFor(pansement, 'Cocody'), withPremium);
     });
 
     test('parrainage : un mois offert au parrain, une seule fois', () async {

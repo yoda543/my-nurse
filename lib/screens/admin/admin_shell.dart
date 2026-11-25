@@ -5,6 +5,7 @@ import '../../models.dart';
 import '../../widgets.dart';
 import '../notifications.dart';
 import 'admin_dashboard.dart';
+import 'admin_intelligence.dart';
 import 'admin_money.dart';
 import 'admin_ops.dart';
 import 'admin_people.dart';
@@ -66,6 +67,11 @@ enum AdminModule {
     AdminPermission.manageSettings,
   ),
   analytics('Statistiques', Icons.insights_outlined, null),
+  intelligence(
+    'Intelligence',
+    Icons.auto_awesome_outlined,
+    AdminPermission.support,
+  ),
   logs('Journal d’activité', Icons.history, AdminPermission.auditRead),
   staff(
     'Équipe et droits',
@@ -178,6 +184,7 @@ class _AdminShellState extends State<AdminShell> {
       AdminModule.pharmacies => const PharmaciesModule(),
       AdminModule.notifications => const BroadcastModule(),
       AdminModule.analytics => AnalyticsModule(period: period),
+      AdminModule.intelligence => IntelligenceModule(period: period),
       AdminModule.logs => LogsModule(period: period),
       AdminModule.staff => const StaffModule(),
     };
@@ -202,6 +209,7 @@ class _AdminShellState extends State<AdminShell> {
       AdminModule.commissions,
       AdminModule.refunds,
       AdminModule.analytics,
+      AdminModule.intelligence,
       AdminModule.logs,
     }.contains(_module);
     final wide = isWide(context);
